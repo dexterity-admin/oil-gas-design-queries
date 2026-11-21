@@ -13,7 +13,8 @@ LOCAL_SYSTEM = """You answer questions for engineers using ONLY the numbered SOU
 Rules:
 - First give the direct answer in one or two sentences. Then explain briefly.
 - After each fact, write its source number in square brackets, like [1].
-- Copy numbers and units exactly. When a source says "Row that matches the question" or "Value that matches the question", use that row or value and ignore the other rows.
+- Copy numbers and units exactly. When a source says "Value that answers the question", that value is the answer. When it says "Row that matches the question", use that row and ignore the other rows.
+- A source must be about the same thing as the question. Insulation thickness is not wall thickness; a bolt table does not answer a pipe question.
 - If ARITHMETIC HELP is given and the rule's condition is true for the question (for example the question mentions a valve and the rule is about valves), give the calculated value as the answer and show the calculation. If the condition is not mentioned in the question, ignore the help.
 - Answer the QUESTION only. Do not repeat the question.
 - Only if none of the SOURCES contains the answer, reply exactly: "The documents do not cover this." Never guess and never use outside knowledge.
@@ -105,7 +106,14 @@ def needs_rewrite(question, prior, style):
 def answer_request(question, prior, chunks, style, template=None, query=""):
     system = (template or SYSTEM).format(app=config.APP_NAME, style=STYLES.get(style, STYLES["english"]), mark=FOLLOWUP_MARK)
     block = _source_block(chunks, question + " " + (query or ""))
-    return system, prior + [{"role": "user", "content": "SOURCES:\n\n%s\n\nQUESTION: %s" % (block, question)}], block
+    # Judge coverage on the English search query when there is one (the question may be Tanglish or a follow-up).
+    missing = grounding.missing_terms(query or question, [c["heading"] + " " + c["name"] + " " + c["text"] for c in chunks])
+    note = ""
+    if len(missing) >= 2 or any(" " in m for m in missing):
+        note = ('\n\nNOTE: the SOURCES never mention these words from the question: %s. If the question depends on them, '
+                'the documents do not cover it: reply exactly "The documents do not cover this."'
+                % ", ".join('"%s"' % w for w in missing[:6]))
+    return system, prior + [{"role": "user", "content": "SOURCES:\n\n%s%s\n\nQUESTION: %s" % (block, note, question)}], block
 
 
 NOT_FOUND = ("I could not find anything about this in the indexed documents. Try different words, "
@@ -132,11 +140,26 @@ def prepare(messages, style="english", query=None, stage=None, local=True, answe
         short_prior = short_prior[1:]
     # On the PC the small model answers in English; Tanglish is a second, checked rewording step.
     two_step = local and style == "tanglish"
-    system, msgs, block = answer_request(question, short_prior, chunks, "english" if two_step else style,
+    system, msgs, block = answer_request(question, short_prior, chunks, "simple" if two_step else style,
                                          LOCAL_SYSTEM if local else None, query)
     return {"query": query, "sources": sources, "system": system, "messages": msgs, "max_tokens": 700,
             "message": "" if chunks else NOT_FOUND, "tanglish_step": two_step,
             "grounding": block + "\n" + question}
+
+
+async def reword_tanglish(english):
+    """Tanglish needs a capable model: the office model rewords, and code checks nothing changed."""
+    english = grounding.tidy(_clean(english))
+    if not llm.available():
+        return {"ok": False, "reason": "Tanglish wording needs the office model, which is not connected. Shown in simple English."}
+    req = grounding.tanglish_request(english)
+    try:
+        ta = await llm.complete(req["system"], req["messages"], req["max_tokens"])
+    except llm.LLMError as e:
+        return {"ok": False, "reason": str(e)}
+    if not grounding.tanglish_ok(english, ta):
+        return {"ok": False, "reason": "The Tanglish wording changed a value or its meaning, so the English answer is shown."}
+    return {"ok": True, "text": ta}
 
 
 def verify(answer, grounding_text):

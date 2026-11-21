@@ -271,14 +271,11 @@ async function askLocal(bot, history) {
   stage(bot, 'Read');
   await localLLM(prep, (t) => { wrote(bot); bot.content += t; stage(bot, 'Write'); }, noteTaker(bot));
   bot.content = tidy(bot.content);
-  if (prep.tanglish_step) { // English first (numbers are safest there), then a checked rewording
+  if (prep.tanglish_step) { // the PC's small model cannot write Tanglish reliably: the office model rewords, code checks it
     const english = split(bot.content).text; await penDone(bot);
-    trace(bot, 'Rewording in Tanglish', 'rw');
-    const tq = await (await post('api/prepare', { messages: history, style, stage: 'tanglish', answer: english })).json();
-    let ta = ''; bot.english = english; bot.content = ''; bot.shown = 0;
-    await localLLM(tq, (t) => { ta += t; bot.content = ta; });
-    const nums = (x) => (x.match(/\d+(?:\.\d+)?/g) || []).sort().join(',');
-    if (nums(ta) !== nums(english)) { bot.content = english; bot.shown = 0; delete bot.english; trace(bot, 'Tanglish wording changed a number, so the English answer is shown', 'hit'); }
+    trace(bot, 'Asking the office model to reword in Tanglish', 'rw');
+    const r = await (await post('api/tanglish', { answer: english })).json();
+    if (r.ok) { bot.english = english; bot.content = r.text; bot.shown = 0; } else trace(bot, r.reason, 'hit');
   }
   const chk = await (await post('api/verify', { answer: bot.english || bot.content, grounding: prep.grounding })).json();
   bot.unverified = chk.unverified;

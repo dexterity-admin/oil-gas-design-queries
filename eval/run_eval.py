@@ -68,12 +68,8 @@ for name, msgs, style, musts, nots, kind in TESTS:
     else:
         ans, dt = llm(prep, prep["max_tokens"] if LOCAL else 450); total += dt
     body = grounding.tidy(chat._clean(ans))
-    if prep.get("tanglish_step"):
-        ta, dt = llm(chat.prepare(messages, style, stage="tanglish", answer=body), 500); total += dt
-        if grounding.tanglish_ok(body, ta):
-            note = " | english: " + body.replace("\n", " ")[:200]; body = ta
-        else:
-            note = " | TANGLISH REJECTED BY NUMBER CHECK: " + ta.replace("\n", " ")[:200]
+    if prep.get("tanglish_step"):  # on the PC, Tanglish wording is the office model's job; here the facts are checked
+        musts = [m for m in musts if m != TAMIL]; note = " | (PC answers in simple English; office model rewords)"
     invented = chat.verify(body, prep.get("grounding", ""))["unverified"] if prep["sources"] else []
     wrong = [n for n in nots if re.search(n, body, re.I)]
     ok = all(re.search(m, body, re.I) for m in musts) and not wrong and not invented

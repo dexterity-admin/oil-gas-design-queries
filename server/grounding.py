@@ -98,8 +98,9 @@ def table_text(md, question):
             cols = [(h, v) for h, v in zip(head[1:], hits[0][1:])
                     if any(_in_range(re.sub(r"\s*[a-zA-Z°]*\s*\(.*\)\s*$", "", h).strip(), n) for n, u in qnums
                            if u and u in _units(re.sub(r"\(.*\)", "", h)))]
-            if len(cols) == 1:
-                out.append("Value that matches the question: %s = %s" % cols[0])
+            if len(cols) == 1:  # show only the cell that answers the question, so no other value can be picked up
+                out[-1] = "- %s: %s; %s: %s" % (head[0], hits[0][0], cols[0][0], cols[0][1])
+                out.append("Value that answers the question: %s" % cols[0][1])
                 values = [float(cols[0][1])] if re.fullmatch(NUM, cols[0][1]) else values
         out.append("Other rows of the same table (do not use them for this question):")
         out += ["- " + line(r) for r in body if r not in hits]
@@ -128,6 +129,35 @@ def arithmetic_help(texts, values):
         return ""
     return ("ARITHMETIC HELP (already calculated). Use a line ONLY if the question describes the situation in "
             "that rule; if the question does not mention it, ignore the line:\n" + "\n".join("- " + l for l in lines))
+
+
+_COMMON = set("""a an and are as at be been by can could do does did for from had has have how i if in into is it its
+me my of on or our shall should that the their them then there these this those to us was we were what when where which
+who whom whose why will with would you your about above across after against all also any applies apply applied around
+before below between both but during each either every give given gives kind long many maximum minimum max min more most
+much must need needed needs no not often only other over per please required requires same show some such tell than through
+type under until up use used using value values very while within without smaller larger bigger ones one inch they them specification tamil english evlo venum irukkanum irukku ku la
+enna yenna epdi eppadi pannanum""".split())
+
+
+_QUANTITY = set("""thickness pressure temperature span torque speed diameter length width height weight load stress
+velocity flow rating size grade clearance spacing distance slope allowance tolerance time depth capacity power voltage
+current frequency density viscosity hardness strength factor ratio""".split())
+
+
+def missing_terms(question, chunk_texts):
+    """What the question asks about that the sources never mention: single words, and "<thing> <quantity>"
+    pairs that never share a passage. "Wall thickness" is not covered just because one passage says
+    "ring wall" and another says "insulation thickness"."""
+    texts = [t.lower() for t in chunk_texts]
+    raw = re.findall(r"[a-z][a-z-]{2,}", question.lower())
+    stem = lambda w: w[:5] if len(w) > 5 else w.rstrip("s")
+    seen = lambda w: {i for i, t in enumerate(texts) if stem(w) in t}
+    out = [w for w in dict.fromkeys(raw) if w not in _COMMON and not seen(w)]
+    for a, b in zip(raw, raw[1:]):  # words that are directly next to each other in the question
+        if b in _QUANTITY and a not in _COMMON and a not in _QUANTITY and a not in out and not seen(a) & seen(b):
+            out.append(a + " " + b)
+    return out
 
 
 def tidy(answer):
@@ -182,4 +212,6 @@ def tanglish_ok(english, tanglish):
     """The reworded answer must carry exactly the same numbers and citations, and actually be Tanglish."""
     nums = lambda t: sorted(re.findall(NUM, t))
     tamil = re.search(r"\b(ku|la|irukk\w*|venum|pannanum|kudukk?anum|illa|mela|keezha|indha|andha|dhaan|aagum)\b", tanglish, re.I)
-    return nums(english) == nums(tanglish) and bool(tamil) and len(tanglish) > 10
+    # "illa" negates a sentence: reject it unless the English answer is itself a negative.
+    flipped = re.search(r"\billai?\b", tanglish, re.I) and not re.search(r"\b(not|no|never|without)\b", english, re.I)
+    return nums(english) == nums(tanglish) and bool(tamil) and len(tanglish) > 10 and not flipped

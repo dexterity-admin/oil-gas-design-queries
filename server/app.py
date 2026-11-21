@@ -67,6 +67,15 @@ def prepare(req: PrepareRequest):
     return chat.prepare(req.messages, req.style, req.query, req.stage, answer=req.answer)
 
 
+class RewordRequest(BaseModel):
+    answer: str
+
+
+@app.post("/api/tanglish")
+async def tanglish(req: RewordRequest):
+    return await chat.reword_tanglish(req.answer)
+
+
 @app.post("/api/verify")
 def verify(req: VerifyRequest):
     return chat.verify(req.answer, req.grounding)
