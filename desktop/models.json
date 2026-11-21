@@ -1,11 +1,11 @@
 {
   "model": {
-    "name": "Qwen3 1.7B (Q4_K_M)",
-    "file": "Qwen_Qwen3-1.7B-Q4_K_M.gguf",
-    "url": "https://huggingface.co/bartowski/Qwen_Qwen3-1.7B-GGUF/resolve/main/Qwen_Qwen3-1.7B-Q4_K_M.gguf",
-    "size_mb": 1223,
+    "name": "Qwen2.5 1.5B Instruct (Q4_K_M)",
+    "file": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+    "url": "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+    "size_mb": 1066,
     "context": 8192,
-    "system_suffix": " /no_think"
+    "system_suffix": ""
   },
   "runtime": {
     "github_repo": "ggml-org/llama.cpp",

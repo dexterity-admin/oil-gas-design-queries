@@ -22,7 +22,7 @@ paintStyle();
 let chats = store.get('chats', []);
 let current = chats.find((c) => c.id === store.get('current')) || null;
 let messages = current ? current.messages : [];
-let busy = false, ref = null, local = null, tick = null, lib = null, activeSrc = null;
+let busy = false, ref = null, local = null, tick = null, lib = null, activeSrc = null, serverLLM = false;
 
 function save() {
   if (messages.length && !current) {
@@ -152,6 +152,7 @@ function render() {
     if (text) a += `<div class="card" data-i="${idx + 1}">${md(text)}</div>`;
     if (bot.error) a += `<div class="err">${esc(bot.error)}</div>`;
     if (text && !(last && busy) && bot.took) a += `<div class="meta">Answered in ${bot.took} s · ${bot.sources?.length || 0} sources${bot.by ? ' · ' + esc(bot.by) : ''}</div>`;
+    if (text && last && !busy && bot.by === 'this PC' && serverLLM) a += '<button class="ghost again" data-again="1">Get a deeper answer from the office model</button>';
     if (follow.length && last && !busy) a += '<div class="next"><div class="cap">Continue the thread</div>' + follow.map((f) => `<button>${esc(f)}</button>`).join('') + '</div>';
     html += `<div class="turn${idx ? ' fu' : ''}${idx < cutoff ? ' stale' : ''}"><div class="node">Q${pad(qn)}</div>
       <div><div class="q">${esc(u.content)}</div>${idx ? `<div class="fuTag"><b>FOLLOW-UP</b>${q && q.toLowerCase() !== u.content.toLowerCase() ? ' · read as “' + esc(q) + '”' : ''}${idx < cutoff ? ' · no longer in context' : ''}</div>` : ''}</div>
@@ -166,7 +167,8 @@ $('thread').addEventListener('click', (e) => {
     const idx = b.dataset.i ?? b.closest('.card').dataset.i;
     const s = messages[idx]?.sources?.find((x) => x.n == b.dataset.n);
     if (s) openSource(s);
-  } else if (b.closest('.next') || b.closest('.starts')) ask(b.textContent.replace(/^\d\d/, ''));
+  } else if (b.dataset.again) { const q = messages[messages.length - 2].content; messages.splice(-2); ask(q, true); }
+  else if (b.closest('.next') || b.closest('.starts')) ask(b.textContent.replace(/^\d\d/, ''));
 });
 
 // ---------- asking ----------
@@ -219,7 +221,7 @@ async function askServer(bot, history) {
     render();
   });
 }
-async function ask(q) {
+async function ask(q, forceServer = false) {
   q = q.trim(); if (!q || busy) return;
   busy = true; $('send').disabled = true;
   if (!current) messages = [];
@@ -230,7 +232,8 @@ async function ask(q) {
   const started = Date.now();
   tick = setInterval(() => { bot.secs = Math.round((Date.now() - started) / 1000); const c = document.querySelector('.clock'); if (c) c.textContent = pad(Math.floor(bot.secs / 60)) + ':' + pad(bot.secs % 60); }, 1000);
   try {
-    const useLocal = local && ['ready', 'running', 'starting'].includes(local.state);
+    const useLocal = !forceServer && local && ['ready', 'running', 'starting'].includes(local.state);
+    if (!useLocal && serverLLM) bot.by = 'office model';
     if (useLocal) setTimeout(refreshLocal, 1500);
     await (useLocal ? askLocal : askServer)(bot, history);
     if (useLocal) refreshLocal();
@@ -317,7 +320,7 @@ async function refresh() {
   try {
     const s = await (await fetch('api/status')).json();
     document.title = s.app; $('appName').textContent = s.app;
-    const working = s.index.state !== 'idle';
+    const working = s.index.state !== 'idle'; serverLLM = !!s.llm_available;
     $('dot').className = 'led ' + (working ? 'busy' : 'ok');
     $('libText').textContent = working ? `indexing ${s.index.done}/${s.index.total}` : `${s.documents} docs`;
     $('libSummary').textContent = `${s.documents} documents, ${s.chunks} passages. Server model: ${s.llm}. Semantic search: ${s.index.embeddings}.` +

@@ -14,14 +14,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {label: qwen3-1.7b, repo: bartowski/Qwen_Qwen3-1.7B-GGUF, suffix: " /no_think", mode: local}
-          - {label: qwen2.5-1.5b, repo: Qwen/Qwen2.5-1.5B-Instruct-GGUF, suffix: "", mode: local}
-          - {label: qwen3-4b, repo: bartowski/Qwen_Qwen3-4B-GGUF, suffix: " /no_think", mode: local}
-          - {label: gemma-3-4b, repo: bartowski/google_gemma-3-4b-it-GGUF, suffix: "", mode: local}
-          - {label: big-qwen3-8b, repo: bartowski/Qwen_Qwen3-8B-GGUF, suffix: " /no_think", mode: server}
-          - {label: big-gemma-3-12b, repo: bartowski/google_gemma-3-12b-it-GGUF, suffix: "", mode: server}
-          - {label: big-llama-3.1-8b, repo: bartowski/Meta-Llama-3.1-8B-Instruct-GGUF, suffix: "", mode: server}
-          - {label: big-granite-3.3-8b, repo: bartowski/ibm-granite_granite-3.3-8b-instruct-GGUF, suffix: "", mode: server}
+          - {label: final-qwen2.5-1.5b, repo: Qwen/Qwen2.5-1.5B-Instruct-GGUF, suffix: "", mode: local}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -94,7 +87,8 @@ jobs:
           done
           find dmhome -maxdepth 3 | head -40
           curl -s http://127.0.0.1:8720/api/status | cut -c1-300
-          python eval/run_eval.py http://127.0.0.1:8720/llm windows-default " /no_think"
+          python eval/run_eval.py http://127.0.0.1:8720/llm windows-default ""
           curl -s http://127.0.0.1:8720/local/status
-          powershell -Command "Get-Process llama-server | Select-Object Name,@{n='RAM_MB';e={[int]($_.WorkingSet64/1MB)}} | Format-Table"
-          curl -s -X POST http://127.0.0.1:8720/local/unload; sleep 3; curl -s http://127.0.0.1:8720/local/status
+          echo; tasklist //FI "IMAGENAME eq llama-server.exe" || true
+          echo "unload: $(curl -s -X POST http://127.0.0.1:8720/local/unload)"; sleep 3
+          echo "after unload: $(curl -s http://127.0.0.1:8720/local/status)"; tasklist //FI "IMAGENAME eq llama-server.exe" || true

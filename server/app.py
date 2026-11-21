@@ -28,7 +28,7 @@ class ChatRequest(BaseModel):
 
 @app.get("/api/status")
 def status():
-    return {"app": config.APP_NAME, "llm": llm.describe(), "index": ingest.status, **store.stats()}
+    return {"app": config.APP_NAME, "llm": llm.describe(), "llm_available": llm.available(), "index": ingest.status, **store.stats()}
 
 
 @app.post("/api/reindex")

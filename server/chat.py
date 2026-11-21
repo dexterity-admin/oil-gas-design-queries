@@ -14,6 +14,8 @@ Rules:
 - First give the direct answer in one or two sentences. Then explain briefly.
 - After each fact, write its source number in square brackets, like [1].
 - Copy numbers and units exactly. In a table, find the one row that matches the question and use only that row.
+- When rows are ranges such as "Up to 15" and "Above 15", first work out which range the value in the question falls in.
+- When a rule says to reduce or increase a value (for example "reduce by 25 percent"), do the calculation and show it.
 - Answer the QUESTION only. Do not repeat the question.
 - Only if none of the SOURCES contains the answer, reply exactly: "The documents do not cover this." Never guess and never use outside knowledge.
 - {style}

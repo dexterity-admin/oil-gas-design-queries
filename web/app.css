@@ -174,3 +174,5 @@ dialog::backdrop{background:rgba(0,0,0,.55)}
   header{gap:6px;padding:8px}.turn{grid-template-columns:44px 1fr}.q{font-size:18px}#thread{padding:16px 10px}
   #composer{padding-left:10px;padding-right:10px;gap:8px}#refBody.zoomed img{width:280%}
 }
+
+.again{margin-top:10px;font-size:12.5px;color:var(--cyan)}
