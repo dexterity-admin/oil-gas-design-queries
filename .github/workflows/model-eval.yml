@@ -1,0 +1,59 @@
+name: Model evaluation
+on:
+  push:
+    branches: ["claude/**"]
+    paths: ["eval/**", ".github/workflows/model-eval.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {label: qwen2.5-0.5b, repo: Qwen/Qwen2.5-0.5B-Instruct-GGUF, suffix: ""}
+          - {label: qwen2.5-1.5b, repo: Qwen/Qwen2.5-1.5B-Instruct-GGUF, suffix: ""}
+          - {label: gemma-3-1b, repo: bartowski/google_gemma-3-1b-it-GGUF, suffix: ""}
+          - {label: qwen3-1.7b, repo: bartowski/Qwen_Qwen3-1.7B-GGUF, suffix: " /no_think"}
+          - {label: granite-3.3-2b, repo: bartowski/ibm-granite_granite-3.3-2b-instruct-GGUF, suffix: ""}
+          - {label: lfm2-1.2b, repo: LiquidAI/LFM2-1.2B-GGUF, suffix: ""}
+          - {label: smollm2-1.7b, repo: bartowski/SmolLM2-1.7B-Instruct-GGUF, suffix: ""}
+          - {label: llama-3.2-3b, repo: bartowski/Llama-3.2-3B-Instruct-GGUF, suffix: ""}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -q -r requirements.txt
+      - name: Get llama.cpp CPU build
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: |
+          mkdir rt && cd rt
+          gh release download -R ggml-org/llama.cpp -p '*bin-ubuntu-x64*' || true
+          ls -la
+          for f in *.zip; do [ -f "$f" ] && unzip -q "$f"; done
+          for f in *.tar.gz; do [ -f "$f" ] && tar xzf "$f"; done
+          BIN=$(find . -name llama-server -type f | head -1); echo "found: $BIN"
+          if [ -n "$BIN" ]; then chmod +x "$BIN"; echo "LLAMA=$(realpath $BIN)" >> $GITHUB_ENV
+          else pip install -q "llama-cpp-python[server]"; fi
+      - name: Download model
+        run: |
+          FILE=$(curl -sL "https://huggingface.co/api/models/${{ matrix.repo }}" | python -c "import sys,json,re; f=[s['rfilename'] for s in json.load(sys.stdin)['siblings'] if re.search(r'q4_k_m\.gguf$', s['rfilename'], re.I)]; print(f[0])")
+          echo "model file: $FILE"
+          curl -L --fail -o model.gguf "https://huggingface.co/${{ matrix.repo }}/resolve/main/$FILE"
+          ls -la model.gguf; nproc; free -m | head -2; grep -m1 "model name" /proc/cpuinfo
+      - name: Evaluate
+        env: {LIBRARY_DIR: "${{ github.workspace }}/evallib", DATA_DIR: "${{ github.workspace }}/evalkb"}
+        run: |
+          python eval/make_corpus.py evallib
+          if [ -n "$LLAMA" ]; then
+            LD_LIBRARY_PATH=$(dirname $LLAMA) $LLAMA -m model.gguf -c 8192 --port 8719 -t $(nproc) > llama.log 2>&1 &
+          else
+            python -m llama_cpp.server --model model.gguf --n_ctx 8192 --port 8719 --n_threads $(nproc) > llama.log 2>&1 &
+          fi
+          for i in $(seq 120); do curl -sf http://127.0.0.1:8719/v1/models > /dev/null && break; sleep 1; done
+          echo "model RAM (MB): $(ps -C llama-server -o rss= | awk '{print int($1/1024)}')"
+          python eval/run_eval.py http://127.0.0.1:8719 "${{ matrix.label }}" "${{ matrix.suffix }}" || { tail -30 llama.log; exit 1; }
+          echo "RAM after run (MB): $(ps -C llama-server -o rss= | awk '{print int($1/1024)}')"
