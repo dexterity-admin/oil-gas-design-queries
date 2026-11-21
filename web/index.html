@@ -3,65 +3,83 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#101418">
+<meta name="theme-color" content="#0a0e13">
 <title>DexMentor</title>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
 <div id="app">
   <header>
-    <div class="brand"><button id="menuBtn" class="icon" title="Chats">☰</button><span class="logo">◆</span><span id="appName">DexMentor</span>
-      <button id="libBtn" class="pill" title="Library and server status"><i id="dot"></i><span id="libText">connecting</span></button>
+    <button id="menuBtn" class="tool" title="Logbook" aria-label="Logbook">
+      <svg viewBox="0 0 20 20"><path d="M3 5h14M3 10h14M3 15h9"/></svg>
+    </button>
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><circle cx="13" cy="13" r="9.5"/><path d="M20 20l8 8M9.5 9v8h3.2a4 4 0 000-8z"/></svg>
+      <span id="appName">DexMentor</span>
     </div>
-    <div class="tools">
-      <select id="style" title="Answer language">
-        <option value="english">English</option>
-        <option value="simple">Simple English</option>
-        <option value="tanglish">Tanglish</option>
-      </select>
-      <button id="newBtn" class="ghost" title="Start a new chat">New chat</button>
+    <button id="libBtn" class="readout" title="Library and server status">
+      <i id="dot" class="led"></i><span class="k">LIBRARY</span><span id="libText" class="v">connecting</span>
+    </button>
+    <span class="grow"></span>
+    <div id="style" class="seg" role="radiogroup" aria-label="Answer language">
+      <button data-v="english">English</button><button data-v="simple">Simple</button><button data-v="tanglish">Tanglish</button>
     </div>
+    <button id="themeBtn" class="tool" title="Light or dark" aria-label="Theme">
+      <svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="6.5"/><path d="M10 3.5v13a6.5 6.5 0 000-13z" class="fill"/></svg>
+    </button>
   </header>
 
   <main>
     <nav id="side">
-      <button id="newBtn2" class="primary">+ New chat</button>
+      <button id="newBtn" class="cta">+ New enquiry</button>
+      <div class="cap">Logbook</div>
       <div id="chatList"></div>
-      <div id="modelCard" hidden></div>
+      <div id="modelCard" class="unit" hidden></div>
     </nav>
+
     <section id="chatCol">
       <div id="thread"></div>
-      <div id="ctxBar" hidden></div>
       <form id="composer">
-        <textarea id="input" rows="1" placeholder="Ask about your standards and design documents…" autofocus></textarea>
-        <button type="button" id="mic" class="icon" title="Dictate" hidden>🎤</button>
-        <button type="submit" id="send" class="primary" title="Send">Ask</button>
+        <div id="gauge" title="How many earlier questions are carried into the next one" hidden></div>
+        <div class="inputWrap">
+          <textarea id="input" rows="1" placeholder="Ask about your standards and design documents…" autofocus></textarea>
+          <button type="button" id="mic" class="tool" title="Dictate" hidden>
+            <svg viewBox="0 0 20 20"><rect x="7.5" y="2.5" width="5" height="9" rx="2.5"/><path d="M4.5 9.5a5.5 5.5 0 0011 0M10 15v3"/></svg>
+          </button>
+          <button type="submit" id="send" title="Ask">
+            <svg viewBox="0 0 20 20"><path d="M3 10h13M11 4.5L16.5 10 11 15.5"/></svg>
+          </button>
+        </div>
       </form>
     </section>
 
     <aside id="ref" hidden>
-      <div class="refHead">
-        <div class="refTitle"><b id="refDoc"></b><span id="refLoc"></span></div>
-        <button id="refClose" class="icon" title="Close">✕</button>
-      </div>
       <div class="refBar">
-        <button id="prevPg" class="ghost">‹ Prev</button>
-        <span id="pgLabel"></span>
-        <button id="nextPg" class="ghost">Next ›</button>
-        <span class="grow"></span>
-        <button id="zoomBtn" class="ghost">Zoom</button>
-        <a id="openOrig" class="ghost" target="_blank" rel="noopener">Open original ↗</a>
+        <span class="cap">Source sheet</span><span class="grow"></span>
+        <button id="prevPg" class="tool" title="Previous page"><svg viewBox="0 0 20 20"><path d="M12.5 4.5L7 10l5.5 5.5"/></svg></button>
+        <span id="pgLabel" class="mono"></span>
+        <button id="nextPg" class="tool" title="Next page"><svg viewBox="0 0 20 20"><path d="M7.5 4.5L13 10l-5.5 5.5"/></svg></button>
+        <button id="zoomBtn" class="tool" title="Zoom"><svg viewBox="0 0 20 20"><circle cx="9" cy="9" r="5.5"/><path d="M13 13l4 4M6.5 9h5M9 6.5v5"/></svg></button>
+        <button id="refClose" class="tool" title="Close"><svg viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15"/></svg></button>
       </div>
-      <div id="refBody"></div>
+      <div class="sheet">
+        <div id="refBody"></div>
+        <div class="titleBlock">
+          <div class="c wide"><span>Document</span><b id="refDoc"></b></div>
+          <div class="c"><span>Location</span><b id="refLoc"></b></div>
+          <div class="c wide"><span>Section</span><b id="refSec"></b></div>
+          <a id="openOrig" class="c stamp" target="_blank" rel="noopener"><span>Verify</span><b>Open original ↗</b></a>
+        </div>
+      </div>
     </aside>
   </main>
 </div>
 
 <dialog id="libDlg">
-  <h3>Library</h3>
+  <div class="cap">Library</div>
   <p id="libSummary"></p>
   <div id="libList"></div>
-  <div class="dlgBtns"><button id="reindex" class="ghost">Re-scan library folder</button><button id="libClose" class="primary">Close</button></div>
+  <div class="dlgBtns"><button id="reindex" class="ghost">Re-scan library folder</button><button id="libClose" class="cta">Close</button></div>
 </dialog>
 <script src="app.js"></script>
 </body>

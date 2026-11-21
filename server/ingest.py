@@ -69,7 +69,10 @@ def _looks_like_heading(text):
     t = text.strip()
     if not t or len(t) > 110 or "\n" in t.strip():
         return False
-    return bool(HEADING_RE.match(t)) or (t.isupper() and len(t) > 4)
+    if t.isupper() and len(t) > 4:
+        return True
+    # "5.3 Hydrostatic testing" is a heading; "5.3.3 Chloride content shall not exceed 50 ppm." is a clause.
+    return bool(HEADING_RE.match(t)) and len(t) <= 70 and not t.endswith((".", ";", ":")) and " shall " not in t
 
 
 def _md_table(rows):
