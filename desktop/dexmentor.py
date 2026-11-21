@@ -54,18 +54,36 @@ def model_path():
     return DATA / "models" / MANIFEST["model"]["file"]
 
 
-def runtime_cmd():
+def runtime_cmd(kind="cpu"):
     """Command that starts the llama.cpp server, or None if it is not installed yet."""
     override = os.getenv("DEXMENTOR_LLAMA_SERVER")
     if override:
         return shlex.split(override)
     name = "llama-server.exe" if os.name == "nt" else "llama-server"
-    found = sorted((DATA / "runtime").rglob(name))
+    found = sorted((DATA / ("runtime-gpu" if kind == "gpu" else "runtime")).rglob(name))
     return [str(found[0])] if found else None
 
 
+def detect_gpu():
+    """Name of a real graphics card worth testing (an old GeForce counts), or ''."""
+    if os.getenv("DEXMENTOR_FORCE_GPU_TEST"):
+        return "forced test"
+    if os.name != "nt":
+        return ""
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-Command",
+                              "(Get-CimInstance Win32_VideoController).Name"],
+                             capture_output=True, text=True, timeout=20, creationflags=0x08000000).stdout
+    except Exception:
+        return ""
+    for line in out.splitlines():
+        if re.search(r"nvidia|geforce|quadro|radeon|\bamd\b|\barc\b", line, re.I):
+            return line.strip()
+    return ""
+
+
 def refresh_state():
-    if state["state"] in ("downloading", "starting", "running"):
+    if state["state"] in ("downloading", "tuning", "starting", "running"):
         return
     state["state"] = "ready" if model_path().exists() and runtime_cmd() else "missing"
 
@@ -105,6 +123,72 @@ def _latest_runtime_url():
     return match[0]["browser_download_url"]
 
 
+def _unzip(url, folder, step):
+    zip_path = DATA / folder / "runner.zip"
+    _fetch(url, zip_path, step)
+    with zipfile.ZipFile(zip_path) as z:
+        z.extractall(DATA / folder)
+    zip_path.unlink()
+
+
+def _start(kind):
+    threads = max(1, (os.cpu_count() or 4) // 2)  # physical cores; leaves room for other software
+    flags = 0x08000000 if os.name == "nt" else 0  # no console window on Windows
+    cmd = runtime_cmd(kind) + ["-m", str(model_path()), "-c", str(MANIFEST["model"]["context"]),
+                               "--host", "127.0.0.1", "--port", str(LLM_PORT), "-t", str(threads)]
+    if kind == "gpu":
+        cmd += ["-ngl", "99"]
+    return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
+
+
+def _bench(kind):
+    """Seconds this PC needs for one typical question with the CPU or the graphics card; None if it fails."""
+    p = _start(kind)
+    try:
+        for _ in range(180):
+            if p.poll() is not None:
+                return None
+            if _healthy():
+                break
+            time.sleep(0.5)
+        else:
+            return None
+        body = json.dumps({"max_tokens": 48, "temperature": 0, "messages": [{"role": "user", "content":
+               "SOURCES:\n" + "Carbon steel piping shall be supported at the spans given in the table. " * 45 +
+               "\nQUESTION: Summarise the rule in one sentence."}]}).encode()
+        t = time.time()
+        c = http.client.HTTPConnection("127.0.0.1", LLM_PORT, timeout=300)
+        c.request("POST", "/v1/chat/completions", body, {"Content-Type": "application/json"})
+        ok = c.getresponse().status == 200
+        return round(time.time() - t, 1) if ok else None
+    except OSError:
+        return None
+    finally:
+        p.kill()
+        p.wait()
+
+
+def tune():
+    """Old graphics cards are sometimes slower than the processor, so measure instead of guessing."""
+    gpu = detect_gpu()
+    accel = {"mode": "cpu", "gpu": gpu}
+    if gpu and MANIFEST["runtime"].get("gpu_url") and not os.getenv("DEXMENTOR_LLAMA_SERVER"):
+        try:
+            state.update(state="tuning", step="Fetching the graphics-card runner")
+            if not runtime_cmd("gpu"):
+                _unzip(MANIFEST["runtime"]["gpu_url"], "runtime-gpu", "Downloading the graphics-card runner")
+            state.update(state="tuning", step="Timing the processor")
+            accel["cpu_s"] = _bench("cpu")
+            state.update(state="tuning", step="Timing the graphics card")
+            accel["gpu_s"] = _bench("gpu")
+            if accel["gpu_s"] and (not accel["cpu_s"] or accel["gpu_s"] < accel["cpu_s"] * 0.9):
+                accel["mode"] = "gpu"
+        except Exception as e:
+            accel["note"] = str(e)[:200]
+    settings["accel"] = accel
+    SETTINGS_FILE.write_text(json.dumps(settings))
+
+
 def _install_runtime():
     # The pinned build is the one DexMentor was tested with and needs no API lookup (GitHub
     # rate-limits lookups per office IP). The lookup is only a fallback if that file is gone.
@@ -128,6 +212,8 @@ def download():
             _install_runtime()
         if not model_path().exists():
             _fetch(MANIFEST["model"]["url"], model_path(), "Downloading the language model")
+        if "accel" not in settings:
+            tune()
         state["state"] = "ready"
     except Exception as e:
         state.update(state="missing", error=str(e))
@@ -153,12 +239,14 @@ def ensure_model():
         if not cmd or not model_path().exists():
             raise RuntimeError("The language model is not downloaded yet.")
         state["state"] = "starting"
-        threads = max(1, (os.cpu_count() or 4) // 2)  # physical cores; leaves room for other software
-        flags = 0x08000000 if os.name == "nt" else 0  # no console window on Windows
-        proc = subprocess.Popen(cmd + ["-m", str(model_path()), "-c", str(MANIFEST["model"]["context"]),
-                                       "--host", "127.0.0.1", "--port", str(LLM_PORT), "-t", str(threads)],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
+        mode = (settings.get("accel") or {}).get("mode", "cpu")
+        proc = _start(mode)
         for _ in range(240):
+            if proc.poll() is not None and mode == "gpu":  # graphics driver refused: use the processor from now on
+                settings["accel"]["mode"] = mode = "cpu"
+                SETTINGS_FILE.write_text(json.dumps(settings))
+                proc = _start(mode)
+                continue
             if proc.poll() is not None:
                 state.update(state="ready", error="The model runner stopped while starting (not enough free RAM?).")
                 raise RuntimeError(state["error"])
@@ -248,9 +336,14 @@ class Handler(BaseHTTPRequestHandler):
         body = self._body()
         if self.path == "/local/status":
             refresh_state()
-            return self._json({**state, "server_url": settings["server_url"]})
+            return self._json({**state, "server_url": settings["server_url"], "accel": settings.get("accel")})
         if self.path == "/local/download":
             threading.Thread(target=download, daemon=True).start()
+            return self._json({"ok": True})
+        if self.path == "/local/retune":
+            stop_model()
+            settings.pop("accel", None)
+            threading.Thread(target=lambda: (tune(), state.update(state="ready")), daemon=True).start()
             return self._json({"ok": True})
         if self.path == "/local/unload":
             stop_model()

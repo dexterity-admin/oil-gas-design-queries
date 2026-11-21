@@ -62,6 +62,7 @@ jobs:
       LIBRARY_DIR: ${{ github.workspace }}\evallib
       DATA_DIR: ${{ github.workspace }}\evalkb
       DEXMENTOR_HOME: ${{ github.workspace }}\dmhome
+      DEXMENTOR_FORCE_GPU_TEST: "1"
       PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v4
@@ -69,7 +70,7 @@ jobs:
         with: {python-version: "3.12"}
       - run: pip install -q -r requirements.txt pyinstaller
       - name: Build DexMentor.exe
-        run: pyinstaller --onefile --noconsole --name DexMentor --add-data "desktop/models.json;." desktop/dexmentor.py
+        run: pyinstaller --onefile --noconsole --name DexMentor --icon desktop/dexmentor.ico --add-data "desktop/models.json;." desktop/dexmentor.py
       - uses: actions/upload-artifact@v4
         with: {name: DexMentor-windows, path: dist/DexMentor.exe}
       - name: Download, load and ask through the real launcher exe

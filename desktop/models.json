@@ -10,7 +10,8 @@
   "runtime": {
     "url": "https://github.com/ggml-org/llama.cpp/releases/download/b12606/llama-b12606-bin-win-cpu-x64.zip",
     "github_repo": "ggml-org/llama.cpp",
-    "asset_pattern": "bin-win-cpu-x64\\.zip$"
+    "asset_pattern": "bin-win-cpu-x64\\.zip$",
+    "gpu_url": "https://github.com/ggml-org/llama.cpp/releases/download/b12606/llama-b12606-bin-win-vulkan-x64.zip"
   },
   "idle_minutes": 10
 }

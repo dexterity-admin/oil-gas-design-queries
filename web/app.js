@@ -118,7 +118,7 @@ function pipeHtml(bot) {
 function hero() {
   const docs = lib?.docs || [];
   const starts = docs.slice(0, 4).map((d, i) => `<button><i>${pad(i + 1)}</i>What does ${esc(d.name.replace(/\.[a-z]+$/i, ''))} cover?</button>`).join('');
-  return `<div class="hero"><div class="cap">Company standards, explained</div>
+  return `<div class="hero"><div class="cap">Dexterity International · Contractors &amp; Engineers F.Z.C</div>
     <h1>Ask the <em>standards</em>.<br>Check the <em>source</em>.</h1>
     <p>Every answer is written only from your own documents. Each fact carries a numbered balloon: tap it to see the exact page, highlighted.</p>
     <div class="dials"><div class="dial"><b>${lib ? lib.documents : '–'}</b><span>Documents</span></div>
@@ -148,10 +148,11 @@ function render() {
       a += '<div class="refs">' + bot.sources.map((s) =>
         `<button class="slip${s === activeSrc ? ' on' : ''}" data-i="${idx + 1}" data-n="${s.n}"><span class="n">${s.n}</span><b>${esc(s.doc)}</b><span>${esc(s.doc_kind)} · ${esc(s.loc)}</span></button>`).join('') + '</div>';
     }
-    if (bot.stages && last && busy) a += pipeHtml(bot);
-    if (text) a += `<div class="card" data-i="${idx + 1}">${md(text)}</div>`;
+    const live = bot.stages && last && busy;
+    if (live) a += pipeHtml(bot) + `<div class="trace" id="liveTrace">${traceHtml(bot, true)}</div><div class="card" id="liveCard" data-i="${idx + 1}" hidden></div>`;
+    else if (text) a += `<div class="card" data-i="${idx + 1}">${md(text)}</div>`;
     if (bot.error) a += `<div class="err">${esc(bot.error)}</div>`;
-    if (text && !(last && busy) && bot.took) a += `<div class="meta">Answered in ${bot.took} s · ${bot.sources?.length || 0} sources${bot.by ? ' · ' + esc(bot.by) : ''}</div>`;
+    if (text && !live && bot.took) a += `<details class="meta"><summary>Answered in ${bot.took} s · ${bot.sources?.length || 0} sources${bot.by ? ' · ' + esc(bot.by) : ''}${bot.trace?.length ? ' · how it was worked out' : ''}</summary><div class="trace">${traceHtml(bot, false)}</div></details>`;
     if (text && last && !busy && bot.by === 'this PC' && serverLLM) a += '<button class="ghost again" data-again="1">Get a deeper answer from the office model</button>';
     if (follow.length && last && !busy) a += '<div class="next"><div class="cap">Continue the thread</div>' + follow.map((f) => `<button>${esc(f)}</button>`).join('') + '</div>';
     html += `<div class="turn${idx ? ' fu' : ''}${idx < cutoff ? ' stale' : ''}"><div class="node">Q${pad(qn)}</div>
@@ -159,8 +160,54 @@ function render() {
       <div class="a">${a}</div></div>`;
   }
   t.innerHTML = html;
+  paintCard();
   t.scrollTop = t.scrollHeight;
 }
+
+// ---------- live work log and the writing pen ----------
+// The work log shows what is really happening (how the question was read, what was searched,
+// which sheets are being read, any notes the model makes), line by line as it happens.
+function traceHtml(bot, live) {
+  const lines = bot.trace || [];
+  return lines.map((l, i) => `<div class="tl ${l.k || ''}${live && i === lines.length - 1 ? ' cur' : ''}"><i></i><span>${esc(l.t)}</span></div>`).join('');
+}
+function trace(bot, t, k = '', same = false) {
+  bot.trace = bot.trace || [];
+  const lastLine = bot.trace[bot.trace.length - 1];
+  if (same && lastLine && lastLine.k === k) lastLine.t = t; else bot.trace.push({ t, k });
+  const el = $('liveTrace'); if (el) { el.innerHTML = traceHtml(bot, true); $('thread').scrollTop = $('thread').scrollHeight; }
+}
+// Text arrives in bursts; the pen writes it out at an even pace so the page never jumps or stalls.
+function paintCard() {
+  const card = $('liveCard'), bot = messages[messages.length - 1];
+  if (!card || !bot) return;
+  const text = split((bot.content || '').slice(0, bot.shown || 0)).text;
+  card.hidden = !text; if (!text) return;
+  const before = card.querySelectorAll('.cite').length;
+  card.innerHTML = md(text);
+  const cites = card.querySelectorAll('.cite');
+  if (cites.length > before) { // a new balloon landed: pop it and flash the slip it points to
+    const c = cites[cites.length - 1]; c.classList.add('pop');
+    const slip = card.parentElement.querySelector(`.slip[data-n="${c.dataset.n}"]`);
+    if (slip) { slip.classList.remove('flash'); void slip.offsetWidth; slip.classList.add('flash'); }
+  }
+  let host = card.lastElementChild; if (host && /^(UL|OL)$/.test(host.tagName)) host = host.lastElementChild;
+  if (host && !host.classList.contains('tblWrap')) host.insertAdjacentHTML('beforeend', '<span class="pen"></span>');
+}
+function pump(bot) {
+  const tickPen = () => {
+    if (!bot.stages) return;
+    const total = (bot.content || '').length; bot.shown = bot.shown || 0;
+    if (bot.shown < total) {
+      bot.shown = Math.min(total, bot.shown + Math.max(1, Math.ceil((total - bot.shown) / 18)));
+      const th = $('thread'), pinned = th.scrollHeight - th.scrollTop - th.clientHeight < 80;
+      paintCard(); if (pinned) th.scrollTop = th.scrollHeight;
+    }
+    requestAnimationFrame(tickPen);
+  };
+  requestAnimationFrame(tickPen);
+}
+const penDone = (bot) => new Promise((res) => { const w = () => ((bot.shown || 0) >= (bot.content || '').length ? res() : setTimeout(w, 40)); w(); });
 $('thread').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
   if (b.classList.contains('cite') || b.classList.contains('slip')) {
@@ -188,37 +235,49 @@ async function readLines(res, onLine) {
 const stage = (bot, name) => { const i = bot.stages.indexOf(name); if (i > bot.stage) { bot.stage = i; render(); } };
 function showSources(bot, sources, query) {
   bot.sources = sources; bot.query = query;
+  trace(bot, sources.length ? `Found ${sources.length} matching passage${sources.length > 1 ? 's' : ''} in ${new Set(sources.map((s) => s.doc)).size} document(s)` : 'Nothing in the library matches', 'hit');
   if (sources[0] && innerWidth > 860) openSource(sources[0]); else render();
+  sources.forEach((s, i) => setTimeout(() => { if (bot.stages && !bot.content) trace(bot, `Reading [${s.n}] ${s.doc} · ${s.loc}`, 'read'); }, 350 * (i + 1)));
+  document.querySelector('.sheet')?.classList.add('scanning');
 }
 // The model on this PC, reached through the desktop launcher.
-async function localLLM(req, onText) {
+async function localLLM(req, onText, onNote) {
   const res = await post('llm/v1/chat/completions', { stream: true, temperature: 0.2, max_tokens: req.max_tokens,
     messages: [{ role: 'system', content: req.system + (local?.system_suffix || '') }, ...req.messages] });
   await readLines(res, (line) => {
     if (!line.startsWith('data:') || line.includes('[DONE]')) return;
-    const piece = JSON.parse(line.slice(5)).choices?.[0]?.delta?.content; if (piece) onText(piece);
+    const d = JSON.parse(line.slice(5)).choices?.[0]?.delta || {};
+    if (d.reasoning_content && onNote) onNote(d.reasoning_content);
+    if (d.content) onText(d.content);
   });
 }
+const noteTaker = (bot) => { let n = ''; return (t) => { n += t; trace(bot, 'Model notes: ' + n.replace(/\s+/g, ' ').slice(-220), 'note', true); }; };
+const wrote = (bot) => { if (!bot.wrote) { bot.wrote = 1; trace(bot, 'Writing the answer', 'write'); document.querySelector('.sheet')?.classList.remove('scanning'); } };
 async function askLocal(bot, history) {
   bot.by = 'this PC'; let query = null;
   const rw = await (await post('api/prepare', { messages: history, style, stage: 'rewrite' })).json();
-  if (rw.needed) { query = ''; await localLLM(rw, (t) => { query += t; }); query = query.replace(/<\/?think>/g, '').trim(); }
-  stage(bot, 'Search');
+  if (rw.needed) {
+    query = ''; await localLLM(rw, (t) => { query += t; trace(bot, 'Reading it as: “' + query.replace(/<\/?think>/g, '').trim() + '”', 'rw', true); });
+    query = query.replace(/<\/?think>/g, '').trim();
+  }
+  stage(bot, 'Search'); trace(bot, `Searching ${lib ? lib.documents + ' documents, ' + lib.chunks + ' passages' : 'the library'}`, 'search');
   const prep = await (await post('api/prepare', { messages: history, style, query })).json();
   showSources(bot, prep.sources, prep.query);
   if (!prep.sources.length) { bot.content = prep.message; return; }
   stage(bot, 'Read');
-  await localLLM(prep, (t) => { bot.content += t; stage(bot, 'Write'); render(); });
+  await localLLM(prep, (t) => { wrote(bot); bot.content += t; stage(bot, 'Write'); }, noteTaker(bot));
 }
 async function askServer(bot, history) {
   const res = await post('api/chat', { style, messages: history });
   await readLines(res, (line) => {
     const ev = JSON.parse(line);
-    if (ev.type === 'status' && /search/i.test(ev.message)) stage(bot, 'Search');
-    else if (ev.type === 'sources') { showSources(bot, ev.sources, ev.query); stage(bot, 'Read'); }
-    else if (ev.type === 'delta') { bot.content += ev.text; stage(bot, 'Write'); }
-    else if (ev.type === 'error') bot.error = ev.message;
-    render();
+    if (ev.type === 'status' && /search/i.test(ev.message)) { stage(bot, 'Search'); trace(bot, `Searching ${lib ? lib.documents + ' documents, ' + lib.chunks + ' passages' : 'the library'}`, 'search'); }
+    else if (ev.type === 'sources') {
+      if (ev.query && ev.query.toLowerCase() !== history[history.length - 1].content.toLowerCase()) trace(bot, 'Reading it as: “' + ev.query + '”', 'rw');
+      showSources(bot, ev.sources, ev.query); stage(bot, 'Read');
+    } else if (ev.type === 'thinking') noteTaker(bot)(ev.text);
+    else if (ev.type === 'delta') { wrote(bot); bot.content += ev.text; stage(bot, 'Write'); }
+    else if (ev.type === 'error') { bot.error = ev.message; render(); }
   });
 }
 async function ask(q, forceServer = false) {
@@ -228,7 +287,8 @@ async function ask(q, forceServer = false) {
   messages.push({ role: 'user', content: q });
   const history = messages.slice(-(MAX_TURNS * 2 + 1)).map((m) => ({ role: m.role, content: m.content }));
   const bot = { role: 'assistant', content: '', sources: [], stages: ['Understand', 'Search', 'Read', 'Write'], stage: 0, secs: 0 };
-  messages.push(bot); save(); render();
+  bot.trace = [{ t: messages.length > 1 ? `Follow-up received · carrying ${Math.min(MAX_TURNS, (messages.length - 1) / 2)} earlier question(s) as context` : 'Question received', k: 'in' }];
+  messages.push(bot); save(); render(); pump(bot);
   const started = Date.now();
   tick = setInterval(() => { bot.secs = Math.round((Date.now() - started) / 1000); const c = document.querySelector('.clock'); if (c) c.textContent = pad(Math.floor(bot.secs / 60)) + ':' + pad(bot.secs % 60); }, 1000);
   try {
@@ -238,7 +298,8 @@ async function ask(q, forceServer = false) {
     await (useLocal ? askLocal : askServer)(bot, history);
     if (useLocal) refreshLocal();
   } catch (err) { bot.error = 'Something went wrong: ' + err.message; }
-  clearInterval(tick); bot.took = Math.max(1, Math.round((Date.now() - started) / 1000));
+  await penDone(bot); document.querySelector('.sheet')?.classList.remove('scanning');
+  clearInterval(tick); delete bot.shown; delete bot.wrote; bot.took = Math.max(1, Math.round((Date.now() - started) / 1000));
   delete bot.stages; delete bot.stage; delete bot.secs; busy = false; $('send').disabled = false;
   save(); render();
 }
@@ -296,7 +357,10 @@ async function refreshLocal() {
   } catch { local = null; $('modelCard').hidden = true; return false; }
   const c = $('modelCard'); c.hidden = false;
   const mb = (n) => (n / 1048576).toFixed(0);
-  if (local.state === 'downloading') {
+  const acc = local.accel, accLine = !acc ? '' : acc.mode === 'gpu' ? ` Using graphics card: ${esc(acc.gpu)} (${acc.gpu_s} s vs ${acc.cpu_s ?? '–'} s on the processor).` : acc.gpu ? ` ${esc(acc.gpu)} was tested: the processor is faster here${acc.gpu_s ? ` (${acc.cpu_s} s vs ${acc.gpu_s} s)` : ''}.` : '';
+  if (local.state === 'tuning') {
+    c.innerHTML = `<b><i class="led busy"></i>Tuning for this PC</b>${esc(local.step || '')}…`;
+  } else if (local.state === 'downloading') {
     const pct = local.total ? Math.round(local.done / local.total * 100) : 0;
     c.innerHTML = `<b><i class="led busy"></i>${esc(local.step || 'Preparing')}</b>${mb(local.done)} of ${local.total ? mb(local.total) : '?'} MB · ${pct}%<div class="bar"><i style="width:${pct}%"></i></div>`;
   } else if (local.state === 'missing') {
@@ -306,11 +370,11 @@ async function refreshLocal() {
   } else {
     const on = local.state === 'running';
     c.innerHTML = `<b><i class="led ${on ? 'ok' : local.state === 'starting' ? 'busy' : ''}"></i>${on ? 'Model loaded' : local.state === 'starting' ? 'Loading model' : 'Model standing by'}</b>${esc(local.model)}. ` +
-      (on ? 'Unloads by itself when idle.<button class="ghost" id="unBtn">Free the memory now</button>' : 'Loads when you ask.') +
+      accLine + (on ? ' Unloads by itself when idle.<button class="ghost" id="unBtn">Free the memory now</button>' : 'Loads when you ask.') +
       (local.error ? `<div class="err">${esc(local.error)}</div>` : '');
     if (on) $('unBtn').onclick = async () => { await fetch('local/unload', { method: 'POST' }); refreshLocal(); };
   }
-  return local.state === 'downloading' || local.state === 'starting';
+  return ['downloading', 'starting', 'tuning'].includes(local.state);
 }
 let localTimer = null;
 async function pollLocal() { clearTimeout(localTimer); const fast = await refreshLocal(); if (local) localTimer = setTimeout(pollLocal, fast ? 1000 : 8000); }
