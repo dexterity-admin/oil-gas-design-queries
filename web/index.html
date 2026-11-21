@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#101418">
+<title>DexGuide</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand"><span class="logo">◆</span><span id="appName">DexGuide</span>
+      <button id="libBtn" class="pill" title="Library and server status"><i id="dot"></i><span id="libText">connecting</span></button>
+    </div>
+    <div class="tools">
+      <select id="style" title="Answer language">
+        <option value="english">English</option>
+        <option value="simple">Simple English</option>
+        <option value="tanglish">Tanglish</option>
+      </select>
+      <button id="newBtn" class="ghost" title="Start a new chat">New chat</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="chatCol">
+      <div id="thread"></div>
+      <form id="composer">
+        <textarea id="input" rows="1" placeholder="Ask about your standards and design documents…" autofocus></textarea>
+        <button type="button" id="mic" class="icon" title="Dictate" hidden>🎤</button>
+        <button type="submit" id="send" class="primary" title="Send">Ask</button>
+      </form>
+    </section>
+
+    <aside id="ref" hidden>
+      <div class="refHead">
+        <div class="refTitle"><b id="refDoc"></b><span id="refLoc"></span></div>
+        <button id="refClose" class="icon" title="Close">✕</button>
+      </div>
+      <div class="refBar">
+        <button id="prevPg" class="ghost">‹ Prev</button>
+        <span id="pgLabel"></span>
+        <button id="nextPg" class="ghost">Next ›</button>
+        <span class="grow"></span>
+        <button id="zoomBtn" class="ghost">Zoom</button>
+        <a id="openOrig" class="ghost" target="_blank" rel="noopener">Open original ↗</a>
+      </div>
+      <div id="refBody"></div>
+    </aside>
+  </main>
+</div>
+
+<dialog id="libDlg">
+  <h3>Library</h3>
+  <p id="libSummary"></p>
+  <div id="libList"></div>
+  <div class="dlgBtns"><button id="reindex" class="ghost">Re-scan library folder</button><button id="libClose" class="primary">Close</button></div>
+</dialog>
+<script src="app.js"></script>
+</body>
+</html>

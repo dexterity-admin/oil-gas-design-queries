@@ -23,3 +23,8 @@ dummy_sqa_db/
 # Logs / debug dumps
 *.log
 debug_*.txt
+
+# New server runtime data
+library/
+kb/
+.env
