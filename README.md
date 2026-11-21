@@ -34,7 +34,7 @@ http://127.0.0.1:8700. New and changed files are indexed on start, or via *Libra
 | `LLM_PROVIDER` | `anthropic` if a key is set, else `none` | `anthropic`, `ollama` or `none` |
 | `ANTHROPIC_API_KEY` | | Key for the cloud model |
 | `ANTHROPIC_MODEL` | `claude-haiku-5-5` | Cloud model |
-| `OLLAMA_URL` / `OLLAMA_MODEL` | `http://127.0.0.1:11434` / `qwen2.5:3b` | Self-hosted model |
+| `OLLAMA_URL` / `OLLAMA_MODEL` | `http://127.0.0.1:11434` / `granite3.3:8b` | Self-hosted model |
 | `EMBEDDINGS` | `auto` | `off` for keyword search only |
 | `APP_NAME` | `DexMentor` | Name shown in the UI |
 
