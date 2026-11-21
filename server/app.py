@@ -51,6 +51,16 @@ async def chat_endpoint(req: ChatRequest):
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+class PrepareRequest(ChatRequest):
+    query: str | None = None
+    stage: str | None = None
+
+
+@app.post("/api/prepare")
+def prepare(req: PrepareRequest):
+    return chat.prepare(req.messages, req.style, req.query, req.stage)
+
+
 @app.get("/api/chunks/{chunk_id}")
 def chunk(chunk_id: int):
     c = store.get_chunk(chunk_id)

@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#101418">
-<title>DexGuide</title>
+<title>DexMentor</title>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
 <div id="app">
   <header>
-    <div class="brand"><span class="logo">◆</span><span id="appName">DexGuide</span>
+    <div class="brand"><button id="menuBtn" class="icon" title="Chats">☰</button><span class="logo">◆</span><span id="appName">DexMentor</span>
       <button id="libBtn" class="pill" title="Library and server status"><i id="dot"></i><span id="libText">connecting</span></button>
     </div>
     <div class="tools">
@@ -24,8 +24,14 @@
   </header>
 
   <main>
+    <nav id="side">
+      <button id="newBtn2" class="primary">+ New chat</button>
+      <div id="chatList"></div>
+      <div id="modelCard" hidden></div>
+    </nav>
     <section id="chatCol">
       <div id="thread"></div>
+      <div id="ctxBar" hidden></div>
       <form id="composer">
         <textarea id="input" rows="1" placeholder="Ask about your standards and design documents…" autofocus></textarea>
         <button type="button" id="mic" class="icon" title="Dictate" hidden>🎤</button>

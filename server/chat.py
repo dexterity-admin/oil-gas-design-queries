@@ -58,27 +58,72 @@ def _public(c, n):
             "snippet": c["text"][:280]}
 
 
-async def answer(messages, style="english"):
-    """Async generator of events: status, sources, delta, error, done."""
+def _normalize(messages):
     history = [{"role": m["role"], "content": _clean(str(m["content"]))[:4000]}
-               for m in messages if m.get("role") in ("user", "assistant") and m.get("content")][-9:]
+               for m in messages if m.get("role") in ("user", "assistant") and m.get("content")][-13:]
     if not history or history[-1]["role"] != "user":
-        yield {"type": "error", "message": "Please type a question."}
-        return
-    question = history[-1]["content"]
+        return None, []
     prior = history[:-1]
     while prior and prior[0]["role"] != "user":
         prior = prior[1:]
+    return history[-1]["content"], prior
+
+
+def rewrite_request(question, prior):
+    convo = "\n".join("%s: %s" % (m["role"], m["content"][:600]) for m in prior[-4:])
+    return {"system": REWRITE, "max_tokens": 120, "messages": [
+        {"role": "user", "content": "Conversation:\n%s\n\nLatest message: %s" % (convo or "(none)", question)}]}
+
+
+def needs_rewrite(question, prior, style):
+    return bool(prior) or style == "tanglish" or bool(re.search(r"[^\x00-\x7F]", question))
+
+
+def answer_request(question, prior, chunks, style):
+    system = SYSTEM.format(app=config.APP_NAME, style=STYLES.get(style, STYLES["english"]), mark=FOLLOWUP_MARK)
+    return system, prior + [{"role": "user", "content":
+                             "SOURCES:\n\n%s\n\nQUESTION: %s" % (_source_block(chunks), question)}]
+
+
+NOT_FOUND = ("I could not find anything about this in the indexed documents. Try different words, "
+             "or check that the document has been added to the library.")
+
+
+def prepare(messages, style="english", query=None, stage=None):
+    """For answers written by the model on the user's own PC: the server does the searching
+    and hands back a ready-made prompt; the PC only has to generate the words."""
+    question, prior = _normalize(messages)
+    if question is None:
+        return {"error": "Please type a question."}
+    if stage == "rewrite":
+        return {"needed": needs_rewrite(question, prior, style), **rewrite_request(question, prior)}
+    query = query.strip().strip('"') if query and 3 < len(query.strip()) < 400 else question
+    chunks = store.hybrid_search(query, ingest.embed_query(query), k=config.LOCAL_TOP_K)
+    sources = [_public(c, i) for i, c in enumerate(chunks, 1)]
+    for c in chunks:
+        c["text"] = c["text"][:config.LOCAL_SOURCE_CHARS]
+    short_prior = [{"role": m["role"], "content": m["content"][:700]} for m in prior[-4:]]
+    while short_prior and short_prior[0]["role"] != "user":
+        short_prior = short_prior[1:]
+    system, msgs = answer_request(question, short_prior, chunks, style)
+    return {"query": query, "sources": sources, "system": system, "messages": msgs, "max_tokens": 700,
+            "message": "" if chunks else NOT_FOUND}
+
+
+async def answer(messages, style="english"):
+    """Async generator of events: status, sources, delta, error, done."""
+    question, prior = _normalize(messages)
+    if question is None:
+        yield {"type": "error", "message": "Please type a question."}
+        return
 
     # 1. Turn follow-ups and Tanglish into a clean search query.
     query = question
-    needs_rewrite = bool(prior) or style == "tanglish" or re.search(r"[^\x00-\x7F]", question)
-    if needs_rewrite and llm.available():
-        yield {"type": "status", "message": "Understanding your question"}
+    if needs_rewrite(question, prior, style) and llm.available():
+        yield {"type": "status", "message": "Understanding your follow-up" if prior else "Understanding your question"}
         try:
-            convo = "\n".join("%s: %s" % (m["role"], m["content"][:600]) for m in prior[-4:])
-            q = await llm.complete(REWRITE, [{"role": "user", "content":
-                                              "Conversation:\n%s\n\nLatest message: %s" % (convo or "(none)", question)}])
+            req = rewrite_request(question, prior)
+            q = await llm.complete(req["system"], req["messages"])
             if 3 < len(q) < 400:
                 query = q
         except llm.LLMError:
@@ -90,8 +135,7 @@ async def answer(messages, style="english"):
     chunks = await asyncio.to_thread(store.hybrid_search, query, qvec)
     yield {"type": "sources", "query": query, "sources": [_public(c, i) for i, c in enumerate(chunks, 1)]}
     if not chunks:
-        yield {"type": "delta", "text": "I could not find anything about this in the indexed documents. "
-                                        "Try different words, or check that the document has been added to the library."}
+        yield {"type": "delta", "text": NOT_FOUND}
         yield {"type": "done"}
         return
 
@@ -103,8 +147,7 @@ async def answer(messages, style="english"):
                                                     for i, c in enumerate(chunks[:3], 1))}
         yield {"type": "done"}
         return
-    system = SYSTEM.format(app=config.APP_NAME, style=STYLES.get(style, STYLES["english"]), mark=FOLLOWUP_MARK)
-    final = prior + [{"role": "user", "content": "SOURCES:\n\n%s\n\nQUESTION: %s" % (_source_block(chunks), question)}]
+    system, final = answer_request(question, prior, chunks, style)
     try:
         async for piece in llm.stream(system, final):
             yield {"type": "delta", "text": piece}

@@ -4,7 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-APP_NAME = os.getenv("APP_NAME", "DexGuide")  # working name, change in one place
+APP_NAME = os.getenv("APP_NAME", "DexMentor")
 LIBRARY_DIR = Path(os.getenv("LIBRARY_DIR", ROOT / "library")).resolve()  # drop standards here
 DATA_DIR = Path(os.getenv("DATA_DIR", ROOT / "kb")).resolve()  # index + page-image cache
 DB_PATH = DATA_DIR / "index.sqlite"
@@ -26,4 +26,8 @@ EMBED_MODEL = os.getenv("EMBED_MODEL", "BAAI/bge-small-en-v1.5")
 
 CHUNK_CHARS = int(os.getenv("CHUNK_CHARS", "1200"))
 TOP_K = int(os.getenv("TOP_K", "6"))
+# When the answer is written by the small model on the user's own PC, send it fewer, shorter
+# sources: on an old CPU every extra 1000 characters adds seconds before the first word.
+LOCAL_TOP_K = int(os.getenv("LOCAL_TOP_K", "4"))
+LOCAL_SOURCE_CHARS = int(os.getenv("LOCAL_SOURCE_CHARS", "1400"))
 SUPPORTED = {".pdf", ".docx", ".xlsx", ".xlsm", ".pptx"}

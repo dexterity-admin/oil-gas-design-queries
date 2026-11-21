@@ -1,4 +1,4 @@
-# DexGuide (working name)
+# DexMentor
 
 Ask questions about your own standards and design documents and get a plain-language,
 cited answer, with the exact page shown and highlighted next to it.
@@ -36,10 +36,23 @@ http://127.0.0.1:8700. New and changed files are indexed on start, or via *Libra
 | `ANTHROPIC_MODEL` | `claude-haiku-5-5` | Cloud model |
 | `OLLAMA_URL` / `OLLAMA_MODEL` | `http://127.0.0.1:11434` / `qwen2.5:3b` | Self-hosted model |
 | `EMBEDDINGS` | `auto` | `off` for keyword search only |
-| `APP_NAME` | `DexGuide` | Name shown in the UI |
+| `APP_NAME` | `DexMentor` | Name shown in the UI |
 
 With `LLM_PROVIDER=none` the app still finds and shows the matching passages and pages.
 Scanned PDFs are OCR'd if Tesseract is installed on the server.
+
+## Desktop app with the model on the user's PC
+
+`desktop/dexmentor.py` is a small launcher (standard library only) for each engineer's PC:
+
+```bash
+DEXMENTOR_SERVER=http://office-server:8700 python desktop/dexmentor.py
+```
+
+It opens the DexMentor window, offers a one-time download of the model named in
+`desktop/models.json` plus the llama.cpp CPU runner, loads the model only when a question is
+asked, and unloads it after `idle_minutes`. The server still does all searching; the PC only
+writes the answer. To try a different model, change `desktop/models.json`.
 
 The server has no login of its own yet: keep it on `127.0.0.1` or the office network, or put it
 behind Cloudflare Access.
