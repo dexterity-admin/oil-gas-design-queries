@@ -1,0 +1,25 @@
+# Environments / IDE
+.venv/
+venv/
+.idea/
+.vs/
+__pycache__/
+*.pyc
+
+# Build output (PyInstaller)
+build/
+dist/
+
+# Data, models, documents (not for source control)
+data/
+models/
+pdfs_to_process/
+dummy_pdfs_for_sqa_test/
+dummy_sqa_db/
+*.pdf
+*.zip
+*.tmp
+
+# Logs / debug dumps
+*.log
+debug_*.txt
