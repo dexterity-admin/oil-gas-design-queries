@@ -295,6 +295,8 @@ async function askServer(bot, history) {
       showSources(bot, ev.sources, ev.query); stage(bot, 'Read');
     } else if (ev.type === 'thinking') noteTaker(bot)(ev.text);
     else if (ev.type === 'check') bot.unverified = ev.unverified;
+    else if (ev.type === 'status' && /tanglish/i.test(ev.message)) trace(bot, 'Rewording in Tanglish, then checking every number', 'rw');
+    else if (ev.type === 'replace') { bot.english = ev.english; bot.content = ev.text; bot.shown = 0; }
     else if (ev.type === 'delta') { wrote(bot); bot.content += ev.text; stage(bot, 'Write'); }
     else if (ev.type === 'error') { bot.error = ev.message; render(); }
   });

@@ -62,14 +62,20 @@ for name, msgs, style, musts, nots, kind in TESTS:
     rw = chat.prepare(messages, style, stage="rewrite")
     if rw["needed"]:
         query, dt = llm(rw, rw["max_tokens"]); total += dt
-    prep = chat.prepare(messages, style, query=query, local=LOCAL)
+    prep = chat.prepare(messages, style, query=query)  # the office model uses the same guarded path as the PC
     if not prep["sources"] or prep.get("skip_model"):
         ans = prep["message"]; prep["sources"] = []; note = " | (answered by code, not the model)"
     else:
-        ans, dt = llm(prep, prep["max_tokens"] if LOCAL else 450); total += dt
+        ans, dt = llm(prep, prep["max_tokens"] if LOCAL else 400); total += dt
     body = grounding.tidy(chat._clean(ans))
-    if prep.get("tanglish_step"):  # on the PC, Tanglish wording is the office model's job; here the facts are checked
+    if prep.get("tanglish_step") and LOCAL:  # on the PC, Tanglish wording is the office model's job; here the facts are checked
         musts = [m for m in musts if m != TAMIL]; note = " | (PC answers in simple English; office model rewords)"
+    elif prep.get("tanglish_step"):  # the office model rewords its English answer; code checks numbers and meaning
+        ta, dt = llm(grounding.tanglish_request(body), 400); total += dt
+        if grounding.tanglish_ok(body, ta):
+            note = " | english: " + body.replace("\n", " ")[:220]; body = ta
+        else:
+            note = " | TANGLISH REJECTED BY CHECK (english shown instead): " + ta.replace("\n", " ")[:220]
     invented = chat.verify(body, prep.get("grounding", ""))["unverified"] if prep["sources"] else []
     wrong = [n for n in nots if re.search(n, body, re.I)]
     ok = all(re.search(m, body, re.I) for m in musts) and not wrong and not invented

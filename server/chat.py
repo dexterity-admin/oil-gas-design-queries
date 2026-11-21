@@ -27,9 +27,7 @@ STYLES = {
               "technical term the first time you use it.",
     "tanglish": "Write in Tanglish: Tamil written in English letters, mixed naturally with English, the way "
                 "Tamil engineers chat with each other. Keep every technical term, number, unit, clause number "
-                "and document name in English exactly as in the source. "
-                'Example of the style: "Indha tank ku hold time 48 hours [1]. Yenna na, diameter 15 m ku mela irukku, '
-                'adhanala table la second row dhaan use pannanum."',
+                "and document name in English exactly as in the source.",
 }
 
 SYSTEM = """You are {app}, a patient senior engineer who teaches designers and engineers at an engineering \
@@ -220,12 +218,28 @@ async def answer(messages, style="english"):
                                                     for i, c in enumerate(chunks[:3], 1))}
         yield {"type": "done"}
         return
-    system, final, block = answer_request(question, prior, chunks, style, query=query)
+    # Code decides coverage for every model: none of them may answer from a look-alike table or from memory.
+    missing = _missing(query, chunks)
+    if _not_covered(missing):
+        yield {"type": "delta", "text": "The documents do not cover this: the library never mentions %s. The closest "
+               "passages are listed above so you can check them, or try other words." % ", ".join('"%s"' % m for m in missing[:4])}
+        yield {"type": "done"}
+        return
+    # Self-hosted models get the same short, guarded prompt as the on-PC model, and Tanglish as a checked second step.
+    guarded = config.LLM_PROVIDER != "anthropic"
+    two_step = guarded and style == "tanglish"
+    system, final, block = answer_request(question, prior[-4:] if guarded else prior, chunks,
+                                          "simple" if two_step else style, LOCAL_SYSTEM if guarded else None, query)
     text = ""
     try:
         async for piece in llm.stream(system, final):
             text += piece
             yield {"type": "delta", "text": piece}
+        if two_step:
+            yield {"type": "status", "message": "Rewording in Tanglish"}
+            r = await reword_tanglish(text)
+            if r["ok"]:
+                yield {"type": "replace", "text": r["text"], "english": grounding.tidy(_clean(text))}
         yield {"type": "check", **verify(text, block + "\n" + question)}
     except llm.LLMError as e:
         yield {"type": "error", "message": str(e)}

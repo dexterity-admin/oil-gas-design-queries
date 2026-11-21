@@ -173,6 +173,9 @@ def unverified_numbers(answer, source_text):
     body = re.sub(r"(?m)^\s*\d+[.)]\s", " ", body)                           # list numbering
     known = set(re.findall(NUM, source_text))
     known_f = [float(k) for k in known]
+    # "reduce by 25 percent" legitimately brings 0.75 and 75 into a shown calculation.
+    for pct in re.findall(r"(%s)\s*(?:percent|%%)" % NUM, source_text):
+        known_f += [float(pct) / 100, 1 - float(pct) / 100, 1 + float(pct) / 100, 100 - float(pct), 100 + float(pct)]
     bad = []
     for n in re.findall(NUM, body):
         f = float(n)
