@@ -54,6 +54,12 @@ for src in re.findall(r"<script[^>]+src=[\"']([^\"']+\.js)", text, re.I):
     if urlsplit(u).netloc != urlsplit(final).netloc:
         continue
     js = get(u)[0].decode("utf-8", "replace")
+    info.setdefault("js_debug", []).append({"url": u, "len": len(js), "head": js[:200], "count": len(re.findall("exterity", js, re.I))})
+    info.setdefault("near", [])
+    for m in re.finditer(r"exterity", js, re.I):
+        info["near"].append(js[max(0, m.start() - 140):m.end() + 160])
+    info["near"] = info["near"][:80]
+    assets.update(urljoin(final, a) for a in re.findall(r"[\"'`]([\w./-]*\.(?:png|svg|jpe?g|webp))[\"'`]", js))
     for m in re.finditer(r"[^\"'`<>{}]{0,90}(?:Dexterity|DEXTERITY)[^\"'`<>{}]{0,120}", js):
         t = m.group(0).strip()
         if t not in mentions:
