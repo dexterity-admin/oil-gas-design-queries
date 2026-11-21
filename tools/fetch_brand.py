@@ -36,7 +36,7 @@ for c in [text] + [get(u)[0].decode("utf-8", "replace") for u in css[:12] if url
         u = urljoin(final, u)
         if re.search(r"logo", u, re.I) and re.search(r"\.(png|jpe?g|svg|webp)", u, re.I):
             urls.add(u)
-info["colours_by_use"] = sorted(colours.items(), key=lambda kv: -kv[1])[:30]
+
 info["css_vars"] = sorted(set(re.findall(r"(--[\w-]*(?:color|primary|accent|brand)[\w-]*)\s*:\s*([^;}{]{1,40})", text, re.I)))[:40]
 saved = []
 for i, u in enumerate(sorted(urls)[:25]):
@@ -49,16 +49,29 @@ for i, u in enumerate(sorted(urls)[:25]):
         saved.append({"url": u, "error": str(e)})
 # The site is a single-page app: names and logo files live in its script bundle.
 mentions, assets = [], set()
-for src in re.findall(r"<script[^>]+src=[\"']([^\"']+\.js)", text, re.I):
-    u = urljoin(final, src)
-    if urlsplit(u).netloc != urlsplit(final).netloc:
+queue = [urljoin(final, src) for src in re.findall(r"<script[^>]+src=[\"']([^\"']+\.js)", text, re.I)]
+done_js = set()
+while queue and len(done_js) < 25:
+    u = queue.pop(0)
+    if u in done_js or urlsplit(u).netloc != urlsplit(final).netloc:
         continue
-    js = get(u)[0].decode("utf-8", "replace")
+    done_js.add(u)
+    try:
+        js = get(u)[0].decode("utf-8", "replace")
+    except Exception:
+        continue
+    queue += [urljoin(final, "/" + a) for a in re.findall(r"[\"'`]/?(assets/[\w.-]+\.js)[\"'`]", js)]
+    for cssu in re.findall(r"[\"'`]/?(assets/[\w.-]+\.css)[\"'`]", js):
+        try:
+            for h in re.findall(r"#[0-9a-fA-F]{6}\b", get(urljoin(final, "/" + cssu))[0].decode("utf-8", "replace")):
+                colours[h.lower()] = colours.get(h.lower(), 0) + 1
+        except Exception:
+            pass
     info.setdefault("js_debug", []).append({"url": u, "len": len(js), "head": js[:200], "count": len(re.findall("exterity", js, re.I))})
     info.setdefault("near", [])
     for m in re.finditer(r"exterity", js, re.I):
         info["near"].append(js[max(0, m.start() - 140):m.end() + 160])
-    info["near"] = info["near"][:80]
+    info["near"] = info["near"][:160]
     assets.update(urljoin(final, a) for a in re.findall(r"[\"'`]([\w./-]*\.(?:png|svg|jpe?g|webp))[\"'`]", js))
     for m in re.finditer(r"[^\"'`<>{}]{0,90}(?:Dexterity|DEXTERITY)[^\"'`<>{}]{0,120}", js):
         t = m.group(0).strip()
@@ -81,6 +94,7 @@ for i, u in enumerate(picked, start=30):
     except Exception as e:
         saved.append({"url": u, "error": str(e)})
 info["images"] = saved
+info["colours_by_use"] = sorted(colours.items(), key=lambda kv: -kv[1])[:30]
 info["img_tags"] = re.findall(r"<img[^>]{0,400}>", text, re.I)[:30]
 (out / "brand.json").write_text(json.dumps(info, indent=1), encoding="utf-8")
 print(json.dumps({k: info[k] for k in ("final_url", "title", "copyright", "images")}, indent=1))
