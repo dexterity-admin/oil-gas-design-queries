@@ -2,20 +2,21 @@ name: Model evaluation
 on:
   push:
     branches: ["claude/**"]
-    paths: ["eval/**", "desktop/**", ".github/workflows/model-eval.yml"]
+    paths: ["eval/**", "desktop/**", "server/**", ".github/workflows/model-eval.yml"]
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   eval:
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
         include:
-          - {label: final-qwen2.5-1.5b, repo: Qwen/Qwen2.5-1.5B-Instruct-GGUF, suffix: "", mode: local}
+          - {label: pc-qwen2.5-1.5b, repo: Qwen/Qwen2.5-1.5B-Instruct-GGUF, suffix: "", mode: local}
+          - {label: pc-qwen2.5-3b, repo: Qwen/Qwen2.5-3B-Instruct-GGUF, suffix: "", mode: local}
+          - {label: office-granite-3.3-8b, repo: bartowski/ibm-granite_granite-3.3-8b-instruct-GGUF, suffix: "", mode: server}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

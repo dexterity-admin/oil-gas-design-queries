@@ -29,7 +29,7 @@ svg .fill{fill:currentColor;stroke:none}
 /* ---- top bar ---- */
 header{display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--line);background:var(--panel)}
 .brand{display:flex;align-items:center;gap:8px;font:700 19px/1 var(--display);letter-spacing:.14em;text-transform:uppercase}
-.mark{width:30px;height:30px}
+.mark{width:34px;height:34px}
 .brand small{display:block;font:500 9.5px/1 var(--display);letter-spacing:.22em;color:var(--mute);margin-top:3px}
 .tool{width:34px;height:34px;display:grid;place-items:center;border:1px solid transparent;border-radius:6px;color:var(--mute)}
 .tool:hover{color:var(--ink);border-color:var(--line);background:var(--raise)}
@@ -198,3 +198,9 @@ details.meta[open] summary{margin-bottom:8px}details.meta .trace{text-transform:
 .sheet.scanning #refBody:after{content:"";position:sticky;display:block;left:0;right:0;bottom:0;height:0;border-top:2px solid var(--amber);
   box-shadow:0 0 18px 6px var(--amber-soft),0 -40px 60px 10px var(--amber-soft);animation:scan 1.6s ease-in-out infinite alternate;pointer-events:none}
 @keyframes scan{from{transform:translateY(-78vh)}to{transform:translateY(-4vh)}}
+
+.chk{font:400 11.5px/1.5 var(--mono);margin-top:8px;padding:6px 10px;border:1px solid var(--line);border-radius:4px}
+.chk b{font:700 10.5px var(--display);letter-spacing:.14em;margin-right:8px}
+.chk.ok{color:var(--mute)}.chk.ok b{color:var(--ok)}
+.chk.bad{border-color:var(--bad);color:var(--ink);background:rgba(255,107,107,.08)}.chk.bad b{color:var(--bad)}
+.byMark{height:11px;vertical-align:-1px;margin-right:4px}

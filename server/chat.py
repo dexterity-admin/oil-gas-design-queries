@@ -2,7 +2,7 @@
 import asyncio
 import re
 
-from . import config, ingest, llm, store
+from . import config, grounding, ingest, llm, store
 
 FOLLOWUP_MARK = "Next questions:"
 _MARK_RE = re.compile(r"\n[ \t*#]*(?:<{2,}\s*FOLLOW-?UPS\s*>{2,}|next questions:?)[ \t*]*(?:\n|$)", re.I)
@@ -13,9 +13,8 @@ LOCAL_SYSTEM = """You answer questions for engineers using ONLY the numbered SOU
 Rules:
 - First give the direct answer in one or two sentences. Then explain briefly.
 - After each fact, write its source number in square brackets, like [1].
-- Copy numbers and units exactly. In a table, find the one row that matches the question and use only that row.
-- When rows are ranges such as "Up to 15" and "Above 15", first work out which range the value in the question falls in.
-- When a rule says to reduce or increase a value (for example "reduce by 25 percent"), do the calculation and show it.
+- Copy numbers and units exactly. When a source says "Row that matches the question" or "Value that matches the question", use that row or value and ignore the other rows.
+- If ARITHMETIC HELP is given and the rule's condition is true for the question (for example the question mentions a valve and the rule is about valves), give the calculated value as the answer and show the calculation. If the condition is not mentioned in the question, ignore the help.
 - Answer the QUESTION only. Do not repeat the question.
 - Only if none of the SOURCES contains the answer, reply exactly: "The documents do not cover this." Never guess and never use outside knowledge.
 - {style}
@@ -59,25 +58,21 @@ def _clean(text):
     return _MARK_RE.split("\n" + text)[0].strip()
 
 
-def _table_records(md):
-    """Markdown grid -> one labelled line per row. Models, small ones especially, pick the
-    wrong row of a grid far more often than they misread 'Bolt size: M20; Torque (Nm): 215'."""
-    rows = [[c.strip() for c in l.strip().strip("|").split("|")] for l in md.splitlines() if l.strip().startswith("|")]
-    if len(rows) < 3 or not all(rows[0]) or len(set(rows[0])) != len(rows[0]):
-        return md
-    head, body = rows[0], rows[2:]
-    return "Table, one row per line:\n" + "\n".join(
-        "- " + "; ".join("%s: %s" % (h, v) for h, v in zip(head, r) if v) for r in body)
-
-
-def _source_block(chunks):
-    parts = []
+def _source_block(chunks, question):
+    parts, values = [], {}
     for i, c in enumerate(chunks, start=1):
         head = "[%d] %s - %s" % (i, c["name"], c["loc"])
         if c["heading"]:
             head += " - " + c["heading"][:90]
-        parts.append(head + "\n" + (_table_records(c["text"]) if c["kind"] == "table" else c["text"]))
-    return "\n\n".join(parts)
+        body = c["text"]
+        if c["kind"] == "table":
+            body, vals = grounding.table_text(body, question)
+            values.setdefault((c["doc_id"], c["page"]), []).extend(vals)
+        parts.append(head + "\n" + body)
+    # A percent rule only applies to the table printed with it (same document, same page).
+    helps = [grounding.arithmetic_help([c["text"]], values.get((c["doc_id"], c["page"]), []))
+             for c in chunks if c["kind"] != "table"]
+    return "\n\n".join(parts + [h for h in dict.fromkeys(helps) if h])
 
 
 def _public(c, n):
@@ -107,17 +102,17 @@ def needs_rewrite(question, prior, style):
     return bool(prior) or style == "tanglish" or bool(re.search(r"[^\x00-\x7F]", question))
 
 
-def answer_request(question, prior, chunks, style, template=None):
+def answer_request(question, prior, chunks, style, template=None, query=""):
     system = (template or SYSTEM).format(app=config.APP_NAME, style=STYLES.get(style, STYLES["english"]), mark=FOLLOWUP_MARK)
-    return system, prior + [{"role": "user", "content":
-                             "SOURCES:\n\n%s\n\nQUESTION: %s" % (_source_block(chunks), question)}]
+    block = _source_block(chunks, question + " " + (query or ""))
+    return system, prior + [{"role": "user", "content": "SOURCES:\n\n%s\n\nQUESTION: %s" % (block, question)}], block
 
 
 NOT_FOUND = ("I could not find anything about this in the indexed documents. Try different words, "
              "or check that the document has been added to the library.")
 
 
-def prepare(messages, style="english", query=None, stage=None, local=True):
+def prepare(messages, style="english", query=None, stage=None, local=True, answer=None):
     """For answers written by the model on the user's own PC: the server does the searching
     and hands back a ready-made prompt; the PC only has to generate the words."""
     question, prior = _normalize(messages)
@@ -125,6 +120,8 @@ def prepare(messages, style="english", query=None, stage=None, local=True):
         return {"error": "Please type a question."}
     if stage == "rewrite":
         return {"needed": needs_rewrite(question, prior, style), **rewrite_request(question, prior)}
+    if stage == "tanglish":
+        return grounding.tanglish_request(grounding.tidy(_clean(answer or "")))
     query = query.strip().strip('"') if query and 3 < len(query.strip()) < 400 else question
     chunks = store.hybrid_search(query, ingest.embed_query(query), k=config.LOCAL_TOP_K if local else config.TOP_K)
     sources = [_public(c, i) for i, c in enumerate(chunks, 1)]
@@ -133,9 +130,18 @@ def prepare(messages, style="english", query=None, stage=None, local=True):
     short_prior = [{"role": m["role"], "content": m["content"][:700]} for m in prior[-4:]]
     while short_prior and short_prior[0]["role"] != "user":
         short_prior = short_prior[1:]
-    system, msgs = answer_request(question, short_prior, chunks, style, LOCAL_SYSTEM if local else None)
+    # On the PC the small model answers in English; Tanglish is a second, checked rewording step.
+    two_step = local and style == "tanglish"
+    system, msgs, block = answer_request(question, short_prior, chunks, "english" if two_step else style,
+                                         LOCAL_SYSTEM if local else None, query)
     return {"query": query, "sources": sources, "system": system, "messages": msgs, "max_tokens": 700,
-            "message": "" if chunks else NOT_FOUND}
+            "message": "" if chunks else NOT_FOUND, "tanglish_step": two_step,
+            "grounding": block + "\n" + question}
+
+
+def verify(answer, grounding_text):
+    """Numbers in the answer that are not in the sources: the app flags these instead of trusting them."""
+    return {"unverified": grounding.unverified_numbers(grounding.tidy(_clean(answer)), grounding_text)}
 
 
 async def answer(messages, style="english"):
@@ -175,10 +181,13 @@ async def answer(messages, style="english"):
                                                     for i, c in enumerate(chunks[:3], 1))}
         yield {"type": "done"}
         return
-    system, final = answer_request(question, prior, chunks, style)
+    system, final, block = answer_request(question, prior, chunks, style, query=query)
+    text = ""
     try:
         async for piece in llm.stream(system, final):
+            text += piece
             yield {"type": "delta", "text": piece}
+        yield {"type": "check", **verify(text, block + "\n" + question)}
     except llm.LLMError as e:
         yield {"type": "error", "message": str(e)}
     yield {"type": "done"}

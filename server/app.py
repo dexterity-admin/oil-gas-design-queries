@@ -54,11 +54,22 @@ async def chat_endpoint(req: ChatRequest):
 class PrepareRequest(ChatRequest):
     query: str | None = None
     stage: str | None = None
+    answer: str | None = None
+
+
+class VerifyRequest(BaseModel):
+    answer: str
+    grounding: str
 
 
 @app.post("/api/prepare")
 def prepare(req: PrepareRequest):
-    return chat.prepare(req.messages, req.style, req.query, req.stage)
+    return chat.prepare(req.messages, req.style, req.query, req.stage, answer=req.answer)
+
+
+@app.post("/api/verify")
+def verify(req: VerifyRequest):
+    return chat.verify(req.answer, req.grounding)
 
 
 @app.get("/api/chunks/{chunk_id}")

@@ -151,6 +151,10 @@ function render() {
     const live = bot.stages && last && busy;
     if (live) a += pipeHtml(bot) + `<div class="trace" id="liveTrace">${traceHtml(bot, true)}</div><div class="card" id="liveCard" data-i="${idx + 1}" hidden></div>`;
     else if (text) a += `<div class="card" data-i="${idx + 1}">${md(text)}</div>`;
+    if (text && !live && bot.unverified) a += bot.unverified.length
+      ? `<div class="chk bad"><b>CHECK THE SOURCE</b> ${bot.unverified.map(esc).join(', ')} ${bot.unverified.length > 1 ? 'are' : 'is'} not found in the cited documents. Do not use ${bot.unverified.length > 1 ? 'these values' : 'this value'} without checking.</div>`
+      : `<div class="chk ok"><b>VALUES CHECKED</b> every number in this answer appears in the cited sources.</div>`;
+    if (text && !live && bot.english) a += `<details class="meta"><summary>English original</summary><div class="card">${md(bot.english)}</div></details>`;
     if (bot.error) a += `<div class="err">${esc(bot.error)}</div>`;
     if (text && !live && bot.took) a += `<details class="meta"><summary>Answered in ${bot.took} s · ${bot.sources?.length || 0} sources${bot.by ? ' · ' + esc(bot.by) : ''}${bot.trace?.length ? ' · how it was worked out' : ''}</summary><div class="trace">${traceHtml(bot, false)}</div></details>`;
     if (text && last && !busy && bot.by === 'this PC' && serverLLM) a += '<button class="ghost again" data-again="1">Get a deeper answer from the office model</button>';
@@ -242,7 +246,7 @@ function showSources(bot, sources, query) {
 }
 // The model on this PC, reached through the desktop launcher.
 async function localLLM(req, onText, onNote) {
-  const res = await post('llm/v1/chat/completions', { stream: true, temperature: 0.2, max_tokens: req.max_tokens,
+  const res = await post('llm/v1/chat/completions', { stream: true, temperature: 0, max_tokens: req.max_tokens,
     messages: [{ role: 'system', content: req.system + (local?.system_suffix || '') }, ...req.messages] });
   await readLines(res, (line) => {
     if (!line.startsWith('data:') || line.includes('[DONE]')) return;
@@ -266,6 +270,23 @@ async function askLocal(bot, history) {
   if (!prep.sources.length) { bot.content = prep.message; return; }
   stage(bot, 'Read');
   await localLLM(prep, (t) => { wrote(bot); bot.content += t; stage(bot, 'Write'); }, noteTaker(bot));
+  bot.content = tidy(bot.content);
+  if (prep.tanglish_step) { // English first (numbers are safest there), then a checked rewording
+    const english = split(bot.content).text; await penDone(bot);
+    trace(bot, 'Rewording in Tanglish', 'rw');
+    const tq = await (await post('api/prepare', { messages: history, style, stage: 'tanglish', answer: english })).json();
+    let ta = ''; bot.english = english; bot.content = ''; bot.shown = 0;
+    await localLLM(tq, (t) => { ta += t; bot.content = ta; });
+    const nums = (x) => (x.match(/\d+(?:\.\d+)?/g) || []).sort().join(',');
+    if (nums(ta) !== nums(english)) { bot.content = english; bot.shown = 0; delete bot.english; trace(bot, 'Tanglish wording changed a number, so the English answer is shown', 'hit'); }
+  }
+  const chk = await (await post('api/verify', { answer: bot.english || bot.content, grounding: prep.grounding })).json();
+  bot.unverified = chk.unverified;
+}
+// Small models sometimes tack the refusal sentence onto a real answer; a real answer wins.
+function tidy(a) {
+  const s = a.replace(/\n+\s*Sources?\s*:\s*(?=\[)/g, ' ').replace(/\s*The documents do not cover this( question)?( directly)?\.?\s*$/i, '').trim();
+  return s.length > 25 ? s : a.trim();
 }
 async function askServer(bot, history) {
   const res = await post('api/chat', { style, messages: history });
@@ -276,6 +297,7 @@ async function askServer(bot, history) {
       if (ev.query && ev.query.toLowerCase() !== history[history.length - 1].content.toLowerCase()) trace(bot, 'Reading it as: “' + ev.query + '”', 'rw');
       showSources(bot, ev.sources, ev.query); stage(bot, 'Read');
     } else if (ev.type === 'thinking') noteTaker(bot)(ev.text);
+    else if (ev.type === 'check') bot.unverified = ev.unverified;
     else if (ev.type === 'delta') { wrote(bot); bot.content += ev.text; stage(bot, 'Write'); }
     else if (ev.type === 'error') { bot.error = ev.message; render(); }
   });
