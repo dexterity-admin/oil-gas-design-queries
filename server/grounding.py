@@ -155,8 +155,8 @@ def missing_terms(question, chunk_texts):
     seen = lambda w: {i for i, t in enumerate(texts) if stem(w) in t}
     out = [w for w in dict.fromkeys(raw) if w not in _COMMON and not seen(w)]
     for a, b in zip(raw, raw[1:]):  # words that are directly next to each other in the question
-        if b in _QUANTITY and a not in _COMMON and a not in _QUANTITY and a not in out and not seen(a) & seen(b):
-            out.append(a + " " + b)
+        if b in _QUANTITY and a not in _COMMON and a not in _QUANTITY and not seen(a) & seen(b) and a + " " + b not in out:
+            out = [w for w in out if w != a] + [a + " " + b]
     return out
 
 
