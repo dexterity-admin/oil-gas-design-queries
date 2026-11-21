@@ -9,15 +9,19 @@ permissions:
 jobs:
   eval:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
         include:
-          - {label: qwen3-1.7b, repo: bartowski/Qwen_Qwen3-1.7B-GGUF, suffix: " /no_think"}
-          - {label: qwen3-4b, repo: bartowski/Qwen_Qwen3-4B-GGUF, suffix: " /no_think"}
-          - {label: gemma-3-4b, repo: bartowski/google_gemma-3-4b-it-GGUF, suffix: ""}
-          - {label: qwen2.5-1.5b, repo: Qwen/Qwen2.5-1.5B-Instruct-GGUF, suffix: ""}
+          - {label: qwen3-1.7b, repo: bartowski/Qwen_Qwen3-1.7B-GGUF, suffix: " /no_think", mode: local}
+          - {label: qwen2.5-1.5b, repo: Qwen/Qwen2.5-1.5B-Instruct-GGUF, suffix: "", mode: local}
+          - {label: qwen3-4b, repo: bartowski/Qwen_Qwen3-4B-GGUF, suffix: " /no_think", mode: local}
+          - {label: gemma-3-4b, repo: bartowski/google_gemma-3-4b-it-GGUF, suffix: "", mode: local}
+          - {label: big-qwen3-8b, repo: bartowski/Qwen_Qwen3-8B-GGUF, suffix: " /no_think", mode: server}
+          - {label: big-gemma-3-12b, repo: bartowski/google_gemma-3-12b-it-GGUF, suffix: "", mode: server}
+          - {label: big-llama-3.1-8b, repo: bartowski/Meta-Llama-3.1-8B-Instruct-GGUF, suffix: "", mode: server}
+          - {label: big-granite-3.3-8b, repo: bartowski/ibm-granite_granite-3.3-8b-instruct-GGUF, suffix: "", mode: server}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -27,8 +31,9 @@ jobs:
         env: {GH_TOKEN: "${{ github.token }}"}
         run: |
           mkdir rt && cd rt
-          gh release view -R ggml-org/llama.cpp --json tagName,assets -q '.tagName, .assets[].name' || true
-          gh release download -R ggml-org/llama.cpp -p '*bin-ubuntu-x64.*' || gh release download -R ggml-org/llama.cpp -p '*ubuntu-x64.*' || true
+          gh release list -R ggml-org/llama.cpp -L 6 || true
+          TAG=$(gh release list -R ggml-org/llama.cpp -L 15 --json tagName -q '.[].tagName' | grep -E '^b[0-9]+' | head -1); echo "tag: $TAG"
+          [ -n "$TAG" ] && gh release view "$TAG" -R ggml-org/llama.cpp --json assets -q '.assets[].name' && gh release download "$TAG" -R ggml-org/llama.cpp -p '*bin-ubuntu-x64.*' || true
           ls -la
           for f in *.zip; do [ -f "$f" ] && unzip -q "$f"; done
           for f in *.tar.gz; do [ -f "$f" ] && tar xzf "$f"; done
@@ -42,7 +47,7 @@ jobs:
           curl -L --fail -o model.gguf "https://huggingface.co/${{ matrix.repo }}/resolve/main/$FILE"
           ls -la model.gguf; nproc; free -m | head -2; grep -m1 "model name" /proc/cpuinfo
       - name: Evaluate
-        env: {LIBRARY_DIR: "${{ github.workspace }}/evallib", DATA_DIR: "${{ github.workspace }}/evalkb"}
+        env: {LIBRARY_DIR: "${{ github.workspace }}/evallib", DATA_DIR: "${{ github.workspace }}/evalkb", EVAL_MODE: "${{ matrix.mode }}"}
         run: |
           python eval/make_corpus.py evallib
           if [ -n "$LLAMA" ]; then
@@ -54,3 +59,42 @@ jobs:
           echo "model RAM (MB): $(ps -eo rss,args | grep -E 'llama[-_](server|cpp)' | grep -v grep | sort -n | tail -1 | awk '{print int($1/1024)}')"
           python eval/run_eval.py http://127.0.0.1:8719 "${{ matrix.label }}" "${{ matrix.suffix }}" || { tail -30 llama.log; exit 1; }
           echo "RAM after run (MB): $(ps -eo rss,args | grep -E 'llama[-_](server|cpp)' | grep -v grep | sort -n | tail -1 | awk '{print int($1/1024)}')"
+
+  desktop:
+    name: Windows in-app download and load
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      LIBRARY_DIR: ${{ github.workspace }}\evallib
+      DATA_DIR: ${{ github.workspace }}\evalkb
+      DEXMENTOR_HOME: ${{ github.workspace }}\dmhome
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -q -r requirements.txt pyinstaller
+      - name: Build DexMentor.exe
+        run: pyinstaller --onefile --noconsole --name DexMentor --add-data "desktop/models.json;." desktop/dexmentor.py
+      - uses: actions/upload-artifact@v4
+        with: {name: DexMentor-windows, path: dist/DexMentor.exe}
+      - name: Download, load and ask through the real launcher exe
+        shell: bash
+        run: |
+          python eval/make_corpus.py evallib
+          python -m server > server.log 2>&1 &
+          ./dist/DexMentor.exe --no-window &
+          sleep 8
+          curl -s -X POST http://127.0.0.1:8720/local/download
+          for i in $(seq 240); do
+            S=$(curl -s http://127.0.0.1:8720/local/status); echo "$S" | cut -c1-200
+            echo "$S" | grep -q '"state": "ready"' && break
+            echo "$S" | grep -q '"error": "[^"]' && { echo DOWNLOAD FAILED; exit 1; }
+            sleep 5
+          done
+          find dmhome -maxdepth 3 | head -40
+          curl -s http://127.0.0.1:8720/api/status | cut -c1-300
+          python eval/run_eval.py http://127.0.0.1:8720/llm windows-default " /no_think"
+          curl -s http://127.0.0.1:8720/local/status
+          powershell -Command "Get-Process llama-server | Select-Object Name,@{n='RAM_MB';e={[int]($_.WorkingSet64/1MB)}} | Format-Table"
+          curl -s -X POST http://127.0.0.1:8720/local/unload; sleep 3; curl -s http://127.0.0.1:8720/local/status

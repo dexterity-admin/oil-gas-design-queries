@@ -96,12 +96,13 @@ def _fetch(url, dest, step):
 
 def _install_runtime():
     rt = MANIFEST["runtime"]
-    api = "https://api.github.com/repos/%s/releases/latest" % rt["github_repo"]
+    api = "https://api.github.com/repos/%s/releases?per_page=15" % rt["github_repo"]
     with urllib.request.urlopen(urllib.request.Request(api, headers={"User-Agent": "DexMentor"}), timeout=30) as r:
-        assets = json.load(r)["assets"]
-    match = [a for a in assets if re.search(rt["asset_pattern"], a["name"])]
+        releases = json.load(r)
+    # Not every release carries binaries, so take the newest one that has a matching CPU build.
+    match = [a for rel in releases for a in rel.get("assets", []) if re.search(rt["asset_pattern"], a["name"])]
     if not match:
-        raise IOError("No CPU build of the model runner was found in the latest llama.cpp release.")
+        raise IOError("No CPU build of the model runner was found in the recent llama.cpp releases.")
     zip_path = DATA / "runtime" / match[0]["name"]
     _fetch(match[0]["browser_download_url"], zip_path, "Downloading the model runner")
     with zipfile.ZipFile(zip_path) as z:

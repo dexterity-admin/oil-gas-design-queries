@@ -14,7 +14,8 @@ Rules:
 - First give the direct answer in one or two sentences. Then explain briefly.
 - After each fact, write its source number in square brackets, like [1].
 - Copy numbers and units exactly. In a table, find the one row that matches the question and use only that row.
-- If the SOURCES do not contain the answer, reply exactly: "The documents do not cover this." Never guess and never use outside knowledge.
+- Answer the QUESTION only. Do not repeat the question.
+- Only if none of the SOURCES contains the answer, reply exactly: "The documents do not cover this." Never guess and never use outside knowledge.
 - {style}
 - Finish with a line that says only "{mark}" and then up to 3 short questions that the SOURCES can answer, one per line."""
 
@@ -56,13 +57,24 @@ def _clean(text):
     return _MARK_RE.split("\n" + text)[0].strip()
 
 
+def _table_records(md):
+    """Markdown grid -> one labelled line per row. Models, small ones especially, pick the
+    wrong row of a grid far more often than they misread 'Bolt size: M20; Torque (Nm): 215'."""
+    rows = [[c.strip() for c in l.strip().strip("|").split("|")] for l in md.splitlines() if l.strip().startswith("|")]
+    if len(rows) < 3 or not all(rows[0]) or len(set(rows[0])) != len(rows[0]):
+        return md
+    head, body = rows[0], rows[2:]
+    return "Table, one row per line:\n" + "\n".join(
+        "- " + "; ".join("%s: %s" % (h, v) for h, v in zip(head, r) if v) for r in body)
+
+
 def _source_block(chunks):
     parts = []
     for i, c in enumerate(chunks, start=1):
         head = "[%d] %s - %s" % (i, c["name"], c["loc"])
         if c["heading"]:
             head += " - " + c["heading"][:90]
-        parts.append(head + "\n" + c["text"])
+        parts.append(head + "\n" + (_table_records(c["text"]) if c["kind"] == "table" else c["text"]))
     return "\n\n".join(parts)
 
 
@@ -103,7 +115,7 @@ NOT_FOUND = ("I could not find anything about this in the indexed documents. Try
              "or check that the document has been added to the library.")
 
 
-def prepare(messages, style="english", query=None, stage=None):
+def prepare(messages, style="english", query=None, stage=None, local=True):
     """For answers written by the model on the user's own PC: the server does the searching
     and hands back a ready-made prompt; the PC only has to generate the words."""
     question, prior = _normalize(messages)
@@ -112,14 +124,14 @@ def prepare(messages, style="english", query=None, stage=None):
     if stage == "rewrite":
         return {"needed": needs_rewrite(question, prior, style), **rewrite_request(question, prior)}
     query = query.strip().strip('"') if query and 3 < len(query.strip()) < 400 else question
-    chunks = store.hybrid_search(query, ingest.embed_query(query), k=config.LOCAL_TOP_K)
+    chunks = store.hybrid_search(query, ingest.embed_query(query), k=config.LOCAL_TOP_K if local else config.TOP_K)
     sources = [_public(c, i) for i, c in enumerate(chunks, 1)]
     for c in chunks:
-        c["text"] = c["text"][:config.LOCAL_SOURCE_CHARS]
+        c["text"] = c["text"][:config.LOCAL_SOURCE_CHARS if local else 6000]
     short_prior = [{"role": m["role"], "content": m["content"][:700]} for m in prior[-4:]]
     while short_prior and short_prior[0]["role"] != "user":
         short_prior = short_prior[1:]
-    system, msgs = answer_request(question, short_prior, chunks, style, LOCAL_SYSTEM)
+    system, msgs = answer_request(question, short_prior, chunks, style, LOCAL_SYSTEM if local else None)
     return {"query": query, "sources": sources, "system": system, "messages": msgs, "max_tokens": 700,
             "message": "" if chunks else NOT_FOUND}
 

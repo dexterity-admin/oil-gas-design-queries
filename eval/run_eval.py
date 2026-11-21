@@ -5,6 +5,7 @@ from server import chat, ingest, store
 
 BASE, LABEL = sys.argv[1].rstrip("/"), sys.argv[2]
 SUFFIX = sys.argv[3] if len(sys.argv) > 3 else ""
+LOCAL = os.getenv("EVAL_MODE", "local") == "local"
 store.init(); ingest.sync()
 print("index:", store.stats(), "embeddings:", ingest.status["embeddings"], flush=True)
 
@@ -43,7 +44,7 @@ for name, msgs, style, musts, kind in TESTS:
     rw = chat.prepare(messages, style, stage="rewrite")
     if rw["needed"]:
         query, extra, _, _ = llm(rw, rw["max_tokens"])
-    prep = chat.prepare(messages, style, query=query)
+    prep = chat.prepare(messages, style, query=query, local=LOCAL)
     if not prep["sources"]:
         ans, dt, usage, tim = prep["message"], 0.0, {}, {}
     else:
