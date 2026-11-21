@@ -63,8 +63,8 @@ for name, msgs, style, musts, nots, kind in TESTS:
     if rw["needed"]:
         query, dt = llm(rw, rw["max_tokens"]); total += dt
     prep = chat.prepare(messages, style, query=query, local=LOCAL)
-    if not prep["sources"]:
-        ans = prep["message"]
+    if not prep["sources"] or prep.get("skip_model"):
+        ans = prep["message"]; prep["sources"] = []; note = " | (answered by code, not the model)"
     else:
         ans, dt = llm(prep, prep["max_tokens"] if LOCAL else 450); total += dt
     body = grounding.tidy(chat._clean(ans))

@@ -107,13 +107,22 @@ def answer_request(question, prior, chunks, style, template=None, query=""):
     system = (template or SYSTEM).format(app=config.APP_NAME, style=STYLES.get(style, STYLES["english"]), mark=FOLLOWUP_MARK)
     block = _source_block(chunks, question + " " + (query or ""))
     # Judge coverage on the English search query when there is one (the question may be Tanglish or a follow-up).
-    missing = grounding.missing_terms(query or question, [c["heading"] + " " + c["name"] + " " + c["text"] for c in chunks])
+    missing = _missing(query or question, chunks)
     note = ""
-    if len(missing) >= 2 or any(" " in m for m in missing):
+    if _not_covered(missing):
         note = ('\n\nNOTE: the SOURCES never mention these words from the question: %s. If the question depends on them, '
                 'the documents do not cover it: reply exactly "The documents do not cover this."'
                 % ", ".join('"%s"' % w for w in missing[:6]))
     return system, prior + [{"role": "user", "content": "SOURCES:\n\n%s%s\n\nQUESTION: %s" % (block, note, question)}], block
+
+
+def _missing(text, chunks):
+    return grounding.missing_terms(text, [c["heading"] + " " + c["name"] + " " + c["text"] for c in chunks])
+
+
+def _not_covered(missing):
+    """True when code alone can tell the library does not cover the question."""
+    return len(missing) >= 2 or any(" " in m for m in missing)
 
 
 NOT_FOUND = ("I could not find anything about this in the indexed documents. Try different words, "
@@ -138,6 +147,13 @@ def prepare(messages, style="english", query=None, stage=None, local=True, answe
     short_prior = [{"role": m["role"], "content": m["content"][:700]} for m in prior[-4:]]
     while short_prior and short_prior[0]["role"] != "user":
         short_prior = short_prior[1:]
+    # A small model will answer from a look-alike table even when warned, so here code decides:
+    # if the library never mentions what is being asked about, say so and show the nearest passages.
+    missing = _missing(query, chunks) if local and chunks else []
+    if _not_covered(missing):
+        return {"query": query, "sources": sources, "skip_model": True, "grounding": "",
+                "message": "The documents do not cover this: the library never mentions %s. The closest passages are "
+                           "listed above so you can check them, or try other words." % ", ".join('"%s"' % m for m in missing[:4])}
     # On the PC the small model answers in English; Tanglish is a second, checked rewording step.
     two_step = local and style == "tanglish"
     system, msgs, block = answer_request(question, short_prior, chunks, "simple" if two_step else style,

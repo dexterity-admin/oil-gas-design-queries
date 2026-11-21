@@ -267,7 +267,7 @@ async function askLocal(bot, history) {
   stage(bot, 'Search'); trace(bot, `Searching ${lib ? lib.documents + ' documents, ' + lib.chunks + ' passages' : 'the library'}`, 'search');
   const prep = await (await post('api/prepare', { messages: history, style, query })).json();
   showSources(bot, prep.sources, prep.query);
-  if (!prep.sources.length) { bot.content = prep.message; return; }
+  if (!prep.sources.length || prep.skip_model) { trace(bot, 'The library does not cover this question', 'hit'); bot.content = prep.message; stage(bot, 'Write'); return; }
   stage(bot, 'Read');
   await localLLM(prep, (t) => { wrote(bot); bot.content += t; stage(bot, 'Write'); }, noteTaker(bot));
   bot.content = tidy(bot.content);
