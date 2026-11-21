@@ -37,7 +37,8 @@ SETTINGS_FILE = DATA / "settings.json"
 
 settings = {"server_url": os.getenv("DEXMENTOR_SERVER", "http://127.0.0.1:8700")}
 state = {"state": "missing", "done": 0, "total": 0, "step": "", "error": "",
-         "model": MANIFEST["model"]["name"], "size_mb": MANIFEST["model"]["size_mb"]}
+         "model": MANIFEST["model"]["name"], "size_mb": MANIFEST["model"]["size_mb"],
+         "system_suffix": MANIFEST["model"].get("system_suffix", "")}
 proc = None
 last_used = 0.0
 lock = threading.Lock()

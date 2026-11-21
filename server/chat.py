@@ -4,7 +4,19 @@ import re
 
 from . import config, ingest, llm, store
 
-FOLLOWUP_MARK = "<<<FOLLOWUPS>>>"
+FOLLOWUP_MARK = "Next questions:"
+_MARK_RE = re.compile(r"\n[ \t*#]*(?:<{2,}\s*FOLLOW-?UPS\s*>{2,}|next questions:?)[ \t*]*(?:\n|$)", re.I)
+
+# Small models running on an office PC follow short, concrete rules far better than long ones.
+LOCAL_SYSTEM = """You answer questions for engineers using ONLY the numbered SOURCES in the user's message.
+
+Rules:
+- First give the direct answer in one or two sentences. Then explain briefly.
+- After each fact, write its source number in square brackets, like [1].
+- Copy numbers and units exactly. In a table, find the one row that matches the question and use only that row.
+- If the SOURCES do not contain the answer, reply exactly: "The documents do not cover this." Never guess and never use outside knowledge.
+- {style}
+- Finish with a line that says only "{mark}" and then up to 3 short questions that the SOURCES can answer, one per line."""
 
 STYLES = {
     "english": "Write in clear, professional English.",
@@ -12,7 +24,9 @@ STYLES = {
               "technical term the first time you use it.",
     "tanglish": "Write in Tanglish: Tamil written in English letters, mixed naturally with English, the way "
                 "Tamil engineers chat with each other. Keep every technical term, number, unit, clause number "
-                "and document name in English exactly as in the source.",
+                "and document name in English exactly as in the source. "
+                'Example of the style: "Indha tank ku hold time 48 hours [1]. Yenna na, diameter 15 m ku mela irukku, '
+                'adhanala table la second row dhaan use pannanum."',
 }
 
 SYSTEM = """You are {app}, a patient senior engineer who teaches designers and engineers at an engineering \
@@ -29,7 +43,7 @@ If the sources do not answer the question, say so plainly, mention the closest t
 you would teach a junior colleague. Use a markdown table when comparing values, and a numbered list for steps.
 - If sources disagree, show both and say which document each comes from.
 - {style}
-- After the answer, write a line containing only {mark} and then up to 3 short follow-up questions \
+- After the answer, write a line that says only "{mark}" and then up to 3 short follow-up questions \
 (one per line, no numbering) that the user would likely ask next and that these sources can answer."""
 
 REWRITE = """Rewrite the user's latest message as one standalone English search query for a library of \
@@ -39,7 +53,7 @@ query only."""
 
 
 def _clean(text):
-    return text.split(FOLLOWUP_MARK)[0].strip()
+    return _MARK_RE.split("\n" + text)[0].strip()
 
 
 def _source_block(chunks):
@@ -79,8 +93,8 @@ def needs_rewrite(question, prior, style):
     return bool(prior) or style == "tanglish" or bool(re.search(r"[^\x00-\x7F]", question))
 
 
-def answer_request(question, prior, chunks, style):
-    system = SYSTEM.format(app=config.APP_NAME, style=STYLES.get(style, STYLES["english"]), mark=FOLLOWUP_MARK)
+def answer_request(question, prior, chunks, style, template=None):
+    system = (template or SYSTEM).format(app=config.APP_NAME, style=STYLES.get(style, STYLES["english"]), mark=FOLLOWUP_MARK)
     return system, prior + [{"role": "user", "content":
                              "SOURCES:\n\n%s\n\nQUESTION: %s" % (_source_block(chunks), question)}]
 
@@ -105,7 +119,7 @@ def prepare(messages, style="english", query=None, stage=None):
     short_prior = [{"role": m["role"], "content": m["content"][:700]} for m in prior[-4:]]
     while short_prior and short_prior[0]["role"] != "user":
         short_prior = short_prior[1:]
-    system, msgs = answer_request(question, short_prior, chunks, style)
+    system, msgs = answer_request(question, short_prior, chunks, style, LOCAL_SYSTEM)
     return {"query": query, "sources": sources, "system": system, "messages": msgs, "max_tokens": 700,
             "message": "" if chunks else NOT_FOUND}
 

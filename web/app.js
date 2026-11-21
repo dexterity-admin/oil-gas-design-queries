@@ -1,7 +1,6 @@
 // Thin client: search and page rendering happen on the office server. The answer is written
 // either by the server's model, or (inside the desktop app) by the small model on this PC.
 const $ = (id) => document.getElementById(id);
-const MARK = '<<<FOLLOWUPS>>>';
 const MAX_TURNS = 6; // how many earlier question/answer pairs are sent as context
 const store = {
   get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
@@ -89,10 +88,15 @@ function md(text, cite = true) {
 }
 
 // ---------- chat rendering ----------
+const MARK_RE = /\n[ \t*#]*(?:<{2,}\s*FOLLOW-?UPS\s*>{2,}|next questions:?)[ \t*]*(?:\n|$)/i;
 function split(content) {
-  const [body, tail = ''] = content.split(MARK);
-  const cut = body.lastIndexOf('<<<'); // hide a half-streamed marker
-  const text = (cut > -1 && MARK.startsWith(body.slice(cut))) ? body.slice(0, cut) : body;
+  // Small local models sometimes leak reasoning tags; never show them.
+  content = '\n' + content.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<\/?think>/g, '');
+  const m = MARK_RE.exec(content);
+  let text = m ? content.slice(0, m.index) : content;
+  const lastLine = text.slice(text.lastIndexOf('\n') + 1).replace(/[*#\s]/g, '').toLowerCase();
+  if (!m && lastLine && 'nextquestions:'.startsWith(lastLine)) text = text.slice(0, text.lastIndexOf('\n')); // half-streamed marker
+  const tail = m ? content.slice(m.index + m[0].length) : '';
   const follow = tail.split('\n').map((s) => s.replace(/^[-*\d.)\s]+/, '').trim()).filter((s) => s.length > 3).slice(0, 3);
   return { text: text.trim(), follow };
 }
@@ -173,7 +177,7 @@ function showSources(bot, sources, query) {
 // The model on this PC, reached through the desktop launcher.
 async function localLLM(req, onText) {
   const res = await post('llm/v1/chat/completions', { stream: true, temperature: 0.2, max_tokens: req.max_tokens,
-    messages: [{ role: 'system', content: req.system }, ...req.messages] });
+    messages: [{ role: 'system', content: req.system + (local?.system_suffix || '') }, ...req.messages] });
   await readLines(res, (line) => {
     if (!line.startsWith('data:') || line.includes('[DONE]')) return;
     const piece = JSON.parse(line.slice(5)).choices?.[0]?.delta?.content; if (piece) onText(piece);
