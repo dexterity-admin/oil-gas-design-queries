@@ -2,12 +2,13 @@ name: Model evaluation
 on:
   push:
     branches: ["claude/**"]
-    paths: ["eval/**", ".github/workflows/model-eval.yml"]
+    paths: ["eval/**", "desktop/**", ".github/workflows/model-eval.yml"]
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   eval:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 240
     strategy:
