@@ -1,0 +1,94 @@
+{
+ "final_url": "https://dexteritydesign.co.in/",
+ "title": [
+  "Dexterity"
+ ],
+ "meta": [
+  [
+   "viewport",
+   "width=device-width, initial-scale=1.0"
+  ]
+ ],
+ "headings": [],
+ "copyright": [],
+ "fonts": [],
+ "colours_by_use": [
+  [
+   "#2c8c98",
+   12
+  ],
+  [
+   "#143f45",
+   7
+  ],
+  [
+   "#168c8b",
+   5
+  ],
+  [
+   "#f7fbfb",
+   3
+  ],
+  [
+   "#f9af46",
+   3
+  ],
+  [
+   "#d5e9ec",
+   2
+  ],
+  [
+   "#f6fafb",
+   2
+  ],
+  [
+   "#eaf5f7",
+   2
+  ],
+  [
+   "#f0a63c",
+   2
+  ],
+  [
+   "#24747d",
+   2
+  ],
+  [
+   "#24757f",
+   2
+  ],
+  [
+   "#f7bd61",
+   2
+  ],
+  [
+   "#1f6f78",
+   1
+  ],
+  [
+   "#f8fcfd",
+   1
+  ],
+  [
+   "#e9f6f8",
+   1
+  ],
+  [
+   "#5b7f85",
+   1
+  ],
+  [
+   "#d4ecef",
+   1
+  ]
+ ],
+ "css_vars": [],
+ "images": [
+  {
+   "file": "00-favicon.png",
+   "url": "https://dexteritydesign.co.in/favicon.png?v=2",
+   "bytes": 62059
+  }
+ ],
+ "img_tags": []
+}
