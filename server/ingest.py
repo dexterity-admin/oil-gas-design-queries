@@ -142,7 +142,11 @@ class _Packer:
 
     def flush(self):
         text = "\n".join(self.buf).strip()
-        if len(text) > 20:
+        lines = [l for l in text.splitlines() if l.strip()]
+        # A contents or index page is a list of titles and page numbers: it matches every question and answers none.
+        listing = len(lines) >= 12 and sum(1 for l in lines if re.fullmatch(r"[\d\s.,ivxlc-]+", l.strip(), re.I)
+                                           or re.search(r"(\.\s?){4,}", l)) >= 0.35 * len(lines)
+        if len(text) > 20 and not listing and self.buf_heading.strip().lower() not in ("index", "contents", "table of contents"):
             self.chunks.append({"page": self.page, "loc": self.loc, "heading": self.buf_heading,
                                 "kind": "text", "text": text, "rects": self.rects})
         self.buf, self.rects = [], []
@@ -278,17 +282,49 @@ def _grid_tables(page):
 
 
 # ---------- parsers ----------
+def _is_scan(page):
+    try:
+        area = page.rect.get_area()
+        return any(pymupdf.Rect(i["bbox"]).get_area() > 0.7 * area for i in page.get_image_info())
+    except Exception:
+        return False
+
+
+def _readable(text):
+    """Machine-read text with the lines that are only drawing debris ("C.'~I~DE:", "1ZaA0J~ rbJ.pz~L") removed."""
+    keep = []
+    for ln in text.splitlines():
+        body = ln.replace(" ", "")
+        if not body:
+            continue
+        clean = sum(ch.isalnum() or ch in ".,;:()-/%'\"&" for ch in body) / len(body)
+        words = re.findall(r"[A-Za-z]{3,}", ln)
+        real = [w for w in words if re.search(r"[aeiouyAEIOUY]", w) and not re.search(r"[a-z][A-Z]", w)]
+        if re.fullmatch(r"[\d.,\s-]+", ln) or (clean >= 0.85 and len(real) >= max(1, 0.6 * len(words))):
+            keep.append(ln)
+    return "\n".join(keep)
+
+
 def parse_pdf(path):
     chunks, notes, heading = [], [], ""
     ocr = bool(shutil.which("tesseract"))
     with pymupdf.open(path) as doc:
         pages = len(doc)
+        try:  # the PDF's own bookmarks: [(first page, title)], used to name sections of scanned books
+            toc = sorted((e[2], re.sub(r"\s+", " ", e[1]).strip()) for e in doc.get_toc() if e[2] > 0 and e[1].strip())
+        except Exception:
+            toc = []
         for pno, page in enumerate(doc, start=1):
             loc = "Page %d" % pno
+            # A scanned page is one big picture with machine-read text behind it. Its drawings come out
+            # as stray letters, so nothing on it is trusted as a table or a heading.
+            scanned = _is_scan(page)
+            if scanned:
+                heading = ([t for p, t in toc if p <= pno] or [""])[-1]
             table_boxes, table_cells, tables, marks = [], [], [], [(-1.0, heading)]
             try:
                 # Table detection is the slowest step and needs ruled lines: skip it on pages that have none.
-                ruled = len(page.get_cdrawings()) >= 4
+                ruled = not scanned and len(page.get_cdrawings()) >= 4
                 found = []
                 for tb in (page.find_tables().tables if ruled else []):
                     found.append((tb.bbox, [[page.get_textbox(pymupdf.Rect(c)) if c else "" for c in row.cells]
@@ -333,9 +369,11 @@ def parse_pdf(path):
                             if t["box"] == k and not t["title"] and 8 < len(lead) <= 120:
                                 t["title"] = _unglue(lead)
                 text = _unglue(re.sub(r"[ \t]+", " ", text)).strip()
+                if scanned:
+                    text = _readable(text)
                 if not text:
                     continue
-                if _looks_like_heading(text):
+                if not scanned and _looks_like_heading(text):
                     packer.flush()
                     heading = text
                     marks.append((b[1], heading))
