@@ -314,8 +314,13 @@ def parse_pdf(path, progress=None):
             toc = sorted((e[2], re.sub(r"\s+", " ", e[1]).strip()) for e in doc.get_toc() if e[2] > 0 and e[1].strip())
         except Exception:
             toc = []
+        # A scanned book whose first bookmark is its title: the pages before chapter one are the title
+        # page, contents and the like, which match every question and answer none.
+        front = toc[1][0] if len(toc) >= 3 and toc[0][0] <= 2 and toc[1][0] <= 40 else 0
         for pno, page in enumerate(doc, start=1):
             loc = "Page %d" % pno
+            if pno < front and _is_scan(page):
+                continue
             # A scanned page is one big picture with machine-read text behind it. Its drawings come out
             # as stray letters, so nothing on it is trusted as a table or a heading.
             scanned = _is_scan(page)

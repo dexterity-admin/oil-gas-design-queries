@@ -3,6 +3,7 @@
 No separate install and no internet: the models are part of the package and run on the CPU
 through the same ONNX runtime the search already uses.
 """
+import re
 import threading
 
 import numpy as np
@@ -32,31 +33,54 @@ def _get():
     return _engine
 
 
-def read_page(page, min_score=0.5, min_number_score=0.72):
-    """Lines of a page picture in reading order: [(text, (x0, y0, x1, y1) in page points, confidence)]."""
+def recognise(page):
+    """Raw pieces of a page picture: [[x0, y0, x1, y1 in page points, text, confidence]]."""
     pix = page.get_pixmap(dpi=DPI, colorspace=pymupdf.csGRAY)
     img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width)
     with _lock:
         result, _ = _get()(img)
-    k = 72.0 / DPI
-    words = []
+    k, out = 72.0 / DPI, []
     for box, text, score in result or []:
-        text = (text or "").strip()
-        if not text or float(score) < min_score:
+        xs, ys = [p[0] for p in box], [p[1] for p in box]
+        out.append([min(xs) * k, min(ys) * k, max(xs) * k, max(ys) * k, (text or "").strip(), float(score)])
+    return out
+
+
+def _gutter(words, width):
+    """The x of the empty strip between two columns of text, or None on a one-column page."""
+    best, best_x = None, None
+    x = 0.35 * width
+    while x <= 0.65 * width:
+        crossing = sum(1 for w in words if w[0] < x - 2 and w[2] > x + 2)
+        if best is None or crossing < best:
+            best, best_x = crossing, x
+        x += 4
+    left = sum(1 for w in words if w[2] <= best_x + 2)
+    right = sum(1 for w in words if w[0] >= best_x - 2)
+    ok = best <= 0.06 * len(words) and left >= 0.2 * len(words) and right >= 0.2 * len(words)
+    return best_x if ok else None
+
+
+def read_page(page, min_score=0.5, min_number_score=0.72):
+    """Lines of a scanned page in reading order: [(text, (x0, y0, x1, y1) in page points, confidence)]."""
+    words = []
+    for w in recognise(page):
+        text, score = w[4], w[5]
+        if not text or score < min_score or re.search(r"[^\x00-\u024f\u2000-\u22ff]", text):
             continue
         # A faintly printed number is the costliest thing to misread: one the reader is unsure of is
         # left out, so the answer says "not found, see the page" instead of quoting a wrong dimension.
-        if sum(ch.isdigit() for ch in text) >= 0.5 * len(text) and float(score) < min_number_score:
+        if sum(ch.isdigit() for ch in text) >= 0.5 * len(text) and score < min_number_score:
             continue
-        xs, ys = [p[0] for p in box], [p[1] for p in box]
-        words.append([min(xs) * k, min(ys) * k, max(xs) * k, max(ys) * k, text, float(score)])
+        # Lettering inside drawings comes out as short capitals the reader is unsure of ("DAMZER").
+        if text.isupper() and len(text) < 30 and score < 0.85:
+            continue
+        words.append(w)
     if not words:
         return []
-    # Two-column pages: when hardly anything crosses the middle of the page, read the left column first.
-    mid = page.rect.width / 2
-    crossing = sum(1 for w in words if w[0] < mid - 12 and w[2] > mid + 12)
-    columns = [words] if crossing > 0.1 * len(words) else [[w for w in words if (w[0] + w[2]) / 2 < mid],
-                                                         [w for w in words if (w[0] + w[2]) / 2 >= mid]]
+    gx = _gutter(words, page.rect.width)
+    columns = [words] if gx is None else [[w for w in words if (w[0] + w[2]) / 2 < gx],
+                                          [w for w in words if (w[0] + w[2]) / 2 >= gx]]
     lines = []
     for col in columns:
         rows = []
