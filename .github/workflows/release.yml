@@ -35,7 +35,7 @@ jobs:
       - name: Build DexMentor Library (server PC)
         run: >
           pyinstaller --noconfirm --onedir --noconsole --name DexMentorLibrary --icon desktop/dexmentor.ico
-          --paths . --collect-submodules server --add-data "web;web" --collect-all fastembed --collect-all onnxruntime
+          --paths . --collect-submodules server --add-data "web;web" --add-data "starter;starter" --collect-all fastembed --collect-all onnxruntime
           --collect-all pymupdf --collect-all tokenizers --collect-submodules uvicorn --collect-submodules docx
           --collect-submodules pptx --collect-submodules openpyxl --collect-data docx --collect-data pptx
           --hidden-import anthropic desktop/library_entry.py
@@ -50,7 +50,8 @@ jobs:
           DEXMENTOR_SERVER=http://127.0.0.1:9 ./dist/DexMentor.exe --no-window &
           sleep 12
           curl -s http://127.0.0.1:8720/local/status | grep -q '"server_url": "http://[0-9.]*:8700"' || { echo "engineer app did not find the Library"; curl -s http://127.0.0.1:8720/local/status; exit 1; }
-          curl -sf http://127.0.0.1:8720/api/status | grep -q '"documents":1' || { echo "document was not indexed"; exit 1; }
+          want=$((1 + $(ls starter | grep -ciE '\.(pdf|docx|xlsx|xlsm|pptx)$' || true)))
+          curl -sf http://127.0.0.1:8720/api/status | grep -q "\"documents\":$want" || { echo "expected $want documents (1 uploaded + the starter library)"; curl -s http://127.0.0.1:8720/api/status; exit 1; }
           echo "smoke test passed"
       - name: Build the installers
         shell: pwsh

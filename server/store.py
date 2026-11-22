@@ -7,7 +7,7 @@ import time
 
 import numpy as np
 
-from . import config
+from . import config, grounding
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS documents(
@@ -66,7 +66,7 @@ def add_document(con, relpath, name, kind, stamp, pages, note, chunks):
             (doc_id, c["page"], c["loc"], c.get("heading", ""), c["kind"], c["text"],
              json.dumps(c.get("rects", []))))
         con.execute("INSERT INTO chunks_fts(rowid,text,heading) VALUES(?,?,?)",
-                    (cur.lastrowid, c["text"], c.get("heading", "")))
+                    (cur.lastrowid, grounding.expand(c["text"]), c.get("heading", "")))
     return doc_id
 
 
@@ -84,9 +84,10 @@ def stats():
 
 
 def _fts_query(q):
+    q = grounding.expand(q)  # "outside diameter" also finds the table that says "OD"
     words = re.findall(r"[A-Za-z0-9]+(?:[.\-/][A-Za-z0-9]+)*", q)
     keep = [w for w in words if w.lower() not in STOP and len(w) > 1] or words
-    return " OR ".join('"%s"' % w.replace('"', "") for w in keep[:24])
+    return " OR ".join('"%s"' % w.replace('"', "") for w in keep[:32])
 
 
 def keyword_search(q, limit=30):

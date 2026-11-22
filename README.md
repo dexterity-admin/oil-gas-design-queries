@@ -27,6 +27,8 @@ DexMentor answers engineers' questions from **your company's own standards, desi
 | --- | --- |
 | **Cited answers** | Each number in an answer carries a balloon. One click opens the original page with the passage highlighted. |
 | **Reads the table, not just the words** | Code finds the row and column that match the question and does percentage sums itself. The model only words the answer. |
+| **Reads real-world PDFs** | Tables drawn by Word, merged header cells, tables laid on their side and sizes written as fractions (1½", ¾") are all read and matched. "OD" finds "outside diameter" and the other way round. |
+| **Answers out of the box** | Documents in the `starter/` folder ship inside the Library installer and are indexed on first start, before the librarian adds anything. |
 | **Says when it does not know** | If the library never mentions what is asked, DexMentor refuses and shows the closest passages instead of guessing. |
 | **Numbers are checked** | Every number in an answer is checked against the sources. Anything not found is flagged in red. |
 | **Private** | Documents, index and models stay on your own PCs. No cloud service is used. |

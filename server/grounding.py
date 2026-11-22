@@ -21,13 +21,65 @@ _LE, _LT = r"(?:up\s*to|upto|≤|<=|=<|max(?:imum)?|not more than|not exceeding|
 _GE, _GT = r"(?:≥|>=|=>|min(?:imum)?|not less than|at least|from)", r"(?:>|above|over|more than|greater than|exceeding|larger than)"
 
 
+_FRACS = {"½": 0.5, "¼": 0.25, "¾": 0.75, "⅛": 0.125, "⅜": 0.375, "⅝": 0.625, "⅞": 0.875, "⅓": 1 / 3, "⅔": 2 / 3}
+
+
+# Engineers write the same thing two ways. Each group is searched for, and counted as covered, together.
+ALIASES = [("od", "outside diameter", "outer diameter"), ("id", "inside diameter", "inner diameter"),
+           ("nps", "nominal pipe size"), ("dn", "diameter nominal", "nominal diameter"), ("nb", "nominal bore"),
+           ("wt", "wall thickness"), ("sch", "schedule"), ("cs", "carbon steel"), ("ss", "stainless steel"),
+           ("las", "low alloy steel"), ("hydro test", "hydrotest", "hydrostatic test", "hydrostatic testing"),
+           ("temp", "temperature"), ("erw", "electric resistance welding"), ("saw", "submerged arc welding"),
+           ("efw", "electric fusion welding"), ("ndt", "nde", "non-destructive testing", "non destructive testing"),
+           ("pwht", "post weld heat treatment"), ("pmi", "positive material identification"),
+           ("igc", "intergranular corrosion"), ("hic", "hydrogen-induced cracking", "hydrogen induced cracking"),
+           ("rt", "radiography", "radiographic"), ("ut", "ultrasonic"), ("mt", "magnetic particle"),
+           ("pt", "dye penetrant", "liquid penetrant"), ("p&id", "piping and instrumentation diagram")]
+
+
+def expand(text):
+    """The text plus the other ways of writing whatever abbreviations or full names it contains."""
+    low = " " + re.sub(r"[^a-z0-9&-]+", " ", text.lower()) + " "
+    extra = [a for group in ALIASES if any(" %s " % a in low for a in group) for a in group if " %s " % a not in low]
+    return text + (" " + " ".join(extra) if extra else "")
+
+
+_NOT_UNITS = {"pipe", "pipes", "size", "sizes", "nominal", "line", "lines", "of", "for", "the", "is", "as", "per", "and", "or"}
+
+
+def _frac(text):
+    """Pipe sizes are written as fractions: "1 ½", "1½", "1-1/2", "3/4". They become 1.5, 0.75 so they can be compared."""
+    def dec(whole, part):
+        return ("%.4f" % (float(whole or 0) + part)).rstrip("0").rstrip(".")
+    text = re.sub(r"(?<![\d./])(?:(\d+)[ -])?(\d{1,2})/(\d{1,2})(?![\d/.])",
+                  lambda m: dec(m.group(1), int(m.group(2)) / int(m.group(3))) if 0 < int(m.group(2)) < int(m.group(3)) else m.group(0), text)
+    text = re.sub(r"(?:(?<![\d.])(\d+)\s?)?([%s])" % "".join(_FRACS), lambda m: dec(m.group(1), _FRACS[m.group(2)]), text)
+    return re.sub(r"(\d)(to|and)\b", r"\1 \2", text)
+
+
+def _upright(rows):
+    """A table laid on its side (sizes run across the top, one quantity per row) turned the usual way,
+    so that each size becomes a row that can be matched."""
+    if len(rows) < 3:
+        return rows
+    head, body = rows[0], rows[2:]
+    across = [_frac(h) for h in head[1:]]
+    numeric = sum(1 for h in across if re.fullmatch(r"\d+(?:\.\d+)?", h))
+    if len(head) < 5 or len(body) >= len(head) - 1 or len(body) > 5 or numeric < 0.8 * len(across):
+        return rows
+    labels = [head[0]] + [r[0] for r in body]
+    if len(set(labels)) != len(labels) or any(not l or re.fullmatch(r"[\d.,\s]+", l) for l in labels):
+        return rows
+    return [labels, ["---"] * len(labels)] + [[head[j]] + [r[j] for r in body] for j in range(1, len(head))]
+
+
 def _num(text):
     return float(re.sub(r"minus\s+", "-", text.lower()).replace(",", ""))
 
 
 def _unit(word):
     w = word.lower().strip(".,;:()[]°") if word else ""
-    return _UNITS.get(w, w)
+    return "" if w in _NOT_UNITS else _UNITS.get(w, w)
 
 
 def _rows(md):
@@ -64,9 +116,13 @@ def _query_numbers(q):
 
 def _range(cell):
     """A cell such as "Up to 15", "< 15", "≥ 15 mm", "3 to 8" or "10 and above" -> a test function, plus its unit."""
-    c = re.sub(r"\s+", " ", cell.lower().strip())
+    c = re.sub(r"\s+", " ", _frac(cell).lower().strip())
     n = r"((?:-|minus )?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)"
     tail = r"\s*([a-z°#%\"µ]*)$"
+    m = re.fullmatch(r"(?:over|above|>)\s*" + n + r"\s*(?:to|-|–|—)\s*" + n + tail, c)
+    if m:  # "Over 4 to 8": more than 4, up to and including 8
+        a, b = _num(m.group(1)), _num(m.group(2))
+        return (lambda v, a=a, b=b: a < v <= b), _unit(m.group(3))
     for pat, test in ((_LE, lambda v, a: v <= a), (_LT, lambda v, a: v < a), (_GE, lambda v, a: v >= a), (_GT, lambda v, a: v > a)):
         m = re.fullmatch(pat + r"\s*" + n + tail, c)
         if m:
@@ -84,7 +140,7 @@ def _range(cell):
 
 
 def _label_units(label):
-    return {_unit(w) for w in re.findall(r"[a-zA-Z#°%\"µ]+", label)}
+    return {_unit(w) for w in re.findall(r"[a-zA-Z#°%\"µ]+", label)} - {""}
 
 
 def _tokens(text):
@@ -106,7 +162,7 @@ def _is_key(col, cells):
 def _cell_match(cell, label, qtokens, qnums):
     """2 if this key cell clearly matches the question, 0 if not, None if the question gives a value
     of this column's kind that this cell does not cover."""
-    c = cell.strip()
+    c = _frac(cell.strip())
     if not c:
         return 0
     test, cell_unit = _range(c)
@@ -133,12 +189,15 @@ def _cell_match(cell, label, qtokens, qnums):
 def table_text(md, question, max_other=12):
     """A table as labelled rows, with the row (and value) that fits the question put first.
     Returns (text, numeric values of the matched row)."""
-    rows = _rows(md)
+    rows = _upright(_rows(md))
     if len(rows) < 3 or not all(rows[0]) or len(set(rows[0])) != len(rows[0]):
         return md, []
     head, body = rows[0], rows[2:]
+    question = _frac(question)
     qtokens, qnums = _tokens(question), _query_numbers(question)
-    keys = [i for i in range(len(head)) if _is_key(i, [r[i] for r in body])]
+    # A column headed NPS, NB or DN is a size designation: a row is selected by it even when it holds bare numbers.
+    sized = lambda h: bool(set(re.findall(r"[a-z]+", h.lower())) & {"nps", "nb", "dn"})
+    keys = [i for i in range(len(head)) if _is_key(i, [r[i] for r in body]) or sized(head[i])]
     line = lambda r: "; ".join("%s: %s" % (h, v) for h, v in zip(head, r) if v)
     scored, uncovered = [], set()
     for r in body:
@@ -235,7 +294,7 @@ def missing_terms(question, chunk_texts):
     """What the question asks about that the sources never mention: single words, and "<thing> <quantity>"
     pairs that never share a passage. "Wall thickness" is not covered just because one passage says
     "ring wall" and another says "insulation thickness"."""
-    texts = [t.lower() for t in chunk_texts]
+    texts = [expand(t).lower() for t in chunk_texts]
     raw = re.findall(r"[a-z][a-z-]{2,}", question.lower())
     seen = lambda w: {i for i, t in enumerate(texts) if _stem(w) in t}
     out = [w for w in dict.fromkeys(raw) if w not in _COMMON and not seen(w)]
@@ -249,6 +308,10 @@ def not_covered(question, missing):
     """True only when code can be confident the library does not cover the question: a refusal written
     by code is a hard stop, so a doubtful case is left to the model instead."""
     if any(" " in m for m in missing):
+        return True
+    words = re.findall(r"[a-z][a-z-]{2,}", question.lower())
+    # "design pressure of a pig launcher": a quantity is asked for a two-word thing the library never names.
+    if any(w in _QUANTITY for w in words) and any(a in missing and b in missing for a, b in zip(words, words[1:])):
         return True
     content = {w for w in re.findall(r"[a-z][a-z-]{2,}", question.lower()) if w not in _COMMON}
     return len(missing) >= 3 and len(missing) >= 0.6 * max(1, len(content))

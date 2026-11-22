@@ -14,7 +14,7 @@ import traceback
 import numpy as np
 import pymupdf
 
-from . import config, store
+from . import config, grounding, store
 
 HEADING_RE = re.compile(r"^(\d+(\.\d+){0,4}|[A-Z]\.\d+(\.\d+)*|APPENDIX|ANNEX|SECTION|PART|TABLE|FIGURE)\b", re.I)
 
@@ -58,7 +58,7 @@ def _embed_missing():
             rows = con.execute("SELECT id, heading, text FROM chunks WHERE emb IS NULL LIMIT 64").fetchall()
         if not rows:
             break
-        vecs = list(m.embed([(r["heading"] + "\n" + r["text"])[:2000] for r in rows]))
+        vecs = list(m.embed([grounding.expand(r["heading"] + "\n" + r["text"])[:2000] for r in rows]))
         with store.db() as con:
             for r, v in zip(rows, vecs):
                 v = np.asarray(v, dtype=np.float32)
@@ -78,6 +78,17 @@ def _looks_like_heading(text):
         return len(t.split()) >= 2  # "CONFIDENTIAL" on every page is a stamp, not a heading
     # "5.3 Hydrostatic testing" is a heading; "5.3.3 Chloride content shall not exceed 50 ppm." is a clause.
     return bool(HEADING_RE.match(t)) and len(t) <= 70 and not t.endswith((".", ";", ":")) and " shall " not in t
+
+
+def _unglue(text):
+    """Some PDFs store their words in pieces that come out stuck together ("steelUsed", "industries.Let").
+
+    Only the safe joins are opened: a capitalised word glued to the end of a lower-case one, and a
+    sentence glued to the full stop or comma before it. Codes such as TP304, mmHg or A106 are untouched.
+    """
+    text = re.sub(r"([a-z]{3})([A-Z][a-z]{2})", r"\1 \2", text)
+    text = re.sub(r"([a-z]{2}[.;:)])([A-Z][a-z])", r"\1 \2", text)
+    return re.sub(r"([a-z]),([A-Za-z]{2})", r"\1, \2", text)
 
 
 def _md_table(rows):
@@ -137,6 +148,135 @@ class _Packer:
         self.buf, self.rects = [], []
 
 
+def _cluster(vals, tol=2.5):
+    out = []
+    for v in sorted(vals):
+        if out and v - out[-1][-1] <= tol:
+            out[-1].append(v)
+        else:
+            out.append([v])
+    return [sum(g) / len(g) for g in out]
+
+
+def _without_cells(text, cells):
+    """Block text with a table's cell texts cut out, leaving the writing around the table."""
+    idx = [i for i, ch in enumerate(text) if not ch.isspace()]
+    flat = "".join(text[i] for i in idx)
+    cells = [re.sub(r"\s", "", c) for c in cells]
+    cells = [c for c in cells if c]
+    if not cells:
+        return text, ""
+    kill, whole = [], flat.find("".join(cells))
+    if whole >= 0:
+        kill.append((whole, whole + len("".join(cells))))
+    else:
+        pos = max(flat.find(cells[0]), 0)
+        for c in cells:
+            k = flat.find(c, pos)
+            if 0 <= k <= pos + 40:  # cells follow one another; a far match is some other text
+                kill.append((k, k + len(c))); pos = k + len(c)
+    out, last = [], 0
+    for a, b in kill:
+        out.append(text[last:idx[a]]); last = idx[b - 1] + 1
+    lead = [ln.strip() for ln in re.sub(r"[ \t]+", " ", out[0]).splitlines() if ln.strip()] if out else []
+    return "\n".join(out + [text[last:]]), (lead[-1] if lead else "")
+
+
+def _grid_tables(page):
+    """Tables whose borders are drawn as thin filled bars (Word and many PDF converters do this).
+
+    PyMuPDF's own finder needs clean word boxes and misses these. The grid is rebuilt from the bars,
+    merged cells are joined where no bar divides them, and each cell is read by its rectangle.
+    Returns [(bbox, rows, cell texts in reading order, title)].
+    """
+    hs, vs = [], []
+    for d in page.get_cdrawings():
+        if "f" not in d.get("type", "") and d.get("type") != "s":
+            continue
+        r = pymupdf.Rect(d["rect"])
+        if r.height <= 2.5 and r.width >= 8:
+            hs.append(((r.y0 + r.y1) / 2, r.x0, r.x1))
+        elif r.width <= 2.5 and r.height >= 5:
+            vs.append(((r.x0 + r.x1) / 2, r.y0, r.y1))
+    if len(hs) < 2 or len(vs) < 2:
+        return []
+    # Split the page into separate tables: a vertical gap with no upright bar ends a table.
+    spans = []
+    for x, y0, y1 in sorted(vs, key=lambda v: v[1]):
+        if spans and y0 <= spans[-1][1] + 3:
+            spans[-1][1] = max(spans[-1][1], y1)
+        else:
+            spans.append([y0, y1])
+    out = []
+    for top, bottom in spans:
+        h = [s for s in hs if top - 3 <= s[0] <= bottom + 3]
+        v = [s for s in vs if s[1] >= top - 3 and s[2] <= bottom + 3]
+        ys, xs = _cluster([s[0] for s in h]), _cluster([s[0] for s in v])
+        if len(ys) < 3 or len(xs) < 3 or (len(ys) - 1) * (len(xs) - 1) > 4000:
+            continue  # a table has at least two rows and two columns
+        rows_n, cols_n = len(ys) - 1, len(xs) - 1
+
+        def hbar(y, x0, x1):
+            return any(abs(s[0] - y) <= 2.5 and s[1] <= x0 + 3 and s[2] >= x1 - 3 for s in h) or \
+                sum(min(s[2], x1) - max(s[1], x0) for s in h if abs(s[0] - y) <= 2.5 and s[2] > x0 and s[1] < x1) >= 0.8 * (x1 - x0)
+
+        def vbar(x, y0, y1):
+            return sum(min(s[2], y1) - max(s[1], y0) for s in v if abs(s[0] - x) <= 2.5 and s[2] > y0 and s[1] < y1) >= 0.8 * (y1 - y0)
+
+        parent = {(i, j): (i, j) for i in range(rows_n) for j in range(cols_n)}
+
+        def find(a):
+            while parent[a] != a:
+                a = parent[a]
+            return a
+
+        for i in range(rows_n):
+            for j in range(cols_n):
+                if j + 1 < cols_n and not vbar(xs[j + 1], ys[i], ys[i + 1]):
+                    parent[find((i, j + 1))] = find((i, j))
+                if i + 1 < rows_n and not hbar(ys[i + 1], xs[j], xs[j + 1]):
+                    parent[find((i + 1, j))] = find((i, j))
+        groups = {}
+        for cell in parent:
+            groups.setdefault(find(cell), []).append(cell)
+        grid = [[""] * cols_n for _ in range(rows_n)]
+        spanned, full, raw = set(), set(), {}
+        for cells in groups.values():
+            i0, i1 = min(c[0] for c in cells), max(c[0] for c in cells)
+            j0, j1 = min(c[1] for c in cells), max(c[1] for c in cells)
+            # Letter boxes are taller than the letters and poke into the rows above and below,
+            # so the cell is read through a slightly smaller window.
+            dy = min(4.0, 0.3 * min(ys[k + 1] - ys[k] for k in range(i0, i1 + 1)))
+            text = page.get_textbox(pymupdf.Rect(xs[j0] + 1.5, ys[i0] + dy, xs[j1 + 1] - 1.5, ys[i1 + 1] - dy))
+            raw[(i0, j0)] = text or ""
+            text = _unglue(re.sub(r"\s+", " ", text or "").strip())
+            # A cell merged across columns belongs to each of them, so its text is repeated;
+            # one merged down several rows likewise, so every row still reads complete.
+            for i in range(i0, i1 + 1):
+                for j in range(j0, j1 + 1):
+                    grid[i][j] = text
+            if j1 > j0:
+                spanned.add(i0)
+            if j0 == 0 and j1 == cols_n - 1 and cols_n > 1:
+                full.update(range(i0, i1 + 1))
+        if sum(1 for r in grid for c in r if c) < 4:
+            continue
+        top_y, title = ys[0], ""
+        while len(grid) > 2 and 0 in full:
+            title = (title + " " + grid[0][0]).strip()
+            raw = {k: t for k, t in raw.items() if k[0] != rows_n - len(grid)}
+            grid, top_y = grid[1:], ys[len(ys) - len(grid)]  # a title bar above the table stays ordinary text
+            spanned, full = {k - 1 for k in spanned if k > 0}, {k - 1 for k in full if k > 0}
+        # "Carbon Steel" over "ASTM A53M | ASTM A106M": fold the two header rows into one.
+        if 0 in spanned and len(grid) > 2 and 1 not in full:
+            grid = [[a if a == b else (a + " " + b).strip() for a, b in zip(grid[0], grid[1])]] + grid[2:]
+            full = {k - 1 for k in full if k > 1}
+        # A note that runs the full width of the table is not a data row.
+        grid = [r for k, r in enumerate(grid) if k == 0 or k not in full]
+        out.append(((xs[0], top_y, xs[-1], ys[-1]), grid, [raw[k] for k in sorted(raw)], title))
+    return out
+
+
 # ---------- parsers ----------
 def parse_pdf(path):
     chunks, notes, heading = [], [], ""
@@ -145,18 +285,26 @@ def parse_pdf(path):
         pages = len(doc)
         for pno, page in enumerate(doc, start=1):
             loc = "Page %d" % pno
-            table_boxes, tables, marks = [], [], [(-1.0, heading)]
+            table_boxes, table_cells, tables, marks = [], [], [], [(-1.0, heading)]
             try:
                 # Table detection is the slowest step and needs ruled lines: skip it on pages that have none.
                 ruled = len(page.get_cdrawings()) >= 4
+                found = []
                 for tb in (page.find_tables().tables if ruled else []):
-                    rows = [[page.get_textbox(pymupdf.Rect(c)) if c else "" for c in row.cells] for row in tb.rows]
+                    found.append((tb.bbox, [[page.get_textbox(pymupdf.Rect(c)) if c else "" for c in row.cells]
+                                            for row in tb.rows], [], ""))
+                if ruled:
+                    for g in _grid_tables(page):
+                        if not any((pymupdf.Rect(g[0]) & pymupdf.Rect(f[0])).get_area() > 0 for f in found):
+                            found.append(g)
+                for bbox, rows, cells, title in found:
                     parts = [md for md in _table_parts(rows) if md.count("\n") >= 2]
                     if parts:
-                        table_boxes.append(pymupdf.Rect(tb.bbox))
+                        table_boxes.append(pymupdf.Rect(bbox))
+                        table_cells.append(cells)
                     for md in parts:
                         tables.append({"page": pno, "loc": loc + " (table)", "kind": "table", "text": md,
-                                       "rects": [[round(x, 1) for x in tb.bbox]]})
+                                       "rects": [[round(x, 1) for x in bbox]], "title": title, "box": len(table_boxes) - 1})
             except Exception:
                 pass
             blocks = [b for b in page.get_text("blocks", sort=True) if b[6] == 0 and b[4].strip()]
@@ -177,7 +325,16 @@ def parse_pdf(path):
                 rect = pymupdf.Rect(b[:4])
                 if any((rect & tb).get_area() > 0.6 * rect.get_area() for tb in table_boxes):
                     continue  # already captured as a table
-                text = re.sub(r"[ \t]+", " ", b[4]).strip()
+                text = b[4]
+                for k, (tb, cells) in enumerate(zip(table_boxes, table_cells)):
+                    if (rect & tb).get_area() > 0 and cells:
+                        text, lead = _without_cells(text, cells)  # one block runs through a table
+                        for t in tables:  # the line that introduces a table names it when it has no title bar
+                            if t["box"] == k and not t["title"] and 8 < len(lead) <= 120:
+                                t["title"] = _unglue(lead)
+                text = _unglue(re.sub(r"[ \t]+", " ", text)).strip()
+                if not text:
+                    continue
                 if _looks_like_heading(text):
                     packer.flush()
                     heading = text
@@ -186,8 +343,9 @@ def parse_pdf(path):
                 else:
                     packer.add(text, b[:4])
             packer.flush()
-            for t in tables:  # a table belongs to the last heading printed above it
-                t["heading"] = [h for y, h in marks if y <= t["rects"][0][1]][-1]
+            for t in tables:  # a table belongs to its own title, or to the last heading printed above it
+                t["heading"] = t.pop("title") or [h for y, h in marks if y <= t["rects"][0][1]][-1]
+                t.pop("box")
             chunks += packer.chunks + tables
     note = ""
     if notes:
@@ -276,6 +434,31 @@ PARSERS = {".pdf": parse_pdf, ".docx": parse_docx, ".xlsx": parse_xlsx, ".xlsm":
 
 
 # ---------- sync the library folder with the index ----------
+def seed_starter():
+    """Copy the documents that ship with the program into the Library, once each.
+    A starter document the librarian later deletes stays deleted; a new one in an update is added."""
+    try:
+        names = sorted(p.name for p in config.STARTER_DIR.iterdir()
+                       if p.is_file() and p.suffix.lower() in config.SUPPORTED)
+    except OSError:
+        return
+    new = [n for n in names if n not in config.STARTER_SEEDED]
+    if not new:
+        return
+    dest = config.LIBRARY_DIR / "Starter library"
+    dest.mkdir(parents=True, exist_ok=True)
+    done = []
+    for n in new:
+        try:
+            if not (dest / n).exists():
+                shutil.copyfile(config.STARTER_DIR / n, dest / n)
+            done.append(n)
+        except OSError:
+            pass
+    if done:
+        config.save(starter_seeded=config.STARTER_SEEDED + done)
+
+
 def sync():
     """Index new and changed files, drop deleted ones. Safe to call any time."""
     global _again
@@ -288,6 +471,7 @@ def sync():
         if _embedder is False:
             _embedder = None  # it may have failed for lack of internet: try again this round
         config.LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
+        seed_starter()
         wanted = lambda p: p.suffix.lower() in config.SUPPORTED and not p.name.startswith(("~$", "."))
         files = {str(p.relative_to(config.LIBRARY_DIR)): p for p in sorted(config.LIBRARY_DIR.rglob("*"))
                  if p.is_file() and wanted(p)}
