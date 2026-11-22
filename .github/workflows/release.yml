@@ -1,0 +1,81 @@
+name: Release
+# Every push builds both Windows installers, smoke-tests them, and publishes a new release.
+on:
+  push:
+    branches: [master, "claude/**"]
+    paths-ignore: ["site/**", "README.md", "docs/**", "eval/**"]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: {group: release, cancel-in-progress: false}
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      APP_VERSION: 1.0.${{ github.run_number }}
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -q -r requirements.txt pyinstaller
+      - name: Unit tests
+        run: python tests/test_grounding.py
+      - name: Stamp the version
+        shell: bash
+        run: |
+          echo "VERSION = \"$APP_VERSION\"" > server/_version.py
+          python - <<'PY'
+          import json, os
+          p = "desktop/models.json"; m = json.load(open(p)); m["version"] = os.environ["APP_VERSION"]; json.dump(m, open(p, "w"), indent=2)
+          PY
+      - name: Build DexMentor (engineer app)
+        run: pyinstaller --noconfirm --onefile --noconsole --name DexMentor --icon desktop/dexmentor.ico --add-data "desktop/models.json;." desktop/dexmentor.py
+      - name: Build DexMentor Library (server PC)
+        run: >
+          pyinstaller --noconfirm --onedir --noconsole --name DexMentorLibrary --icon desktop/dexmentor.ico
+          --paths . --collect-submodules server --add-data "web;web" --collect-all fastembed --collect-all onnxruntime
+          --collect-all pymupdf --collect-all tokenizers --collect-submodules uvicorn --collect-submodules docx
+          --collect-submodules pptx --collect-submodules openpyxl --collect-data docx --collect-data pptx
+          --hidden-import anthropic desktop/library_entry.py
+      - name: Smoke test (Library starts, takes a document, engineer app finds it)
+        shell: bash
+        run: |
+          python eval/make_corpus.py corpus
+          ./dist/DexMentorLibrary/DexMentorLibrary.exe --no-window &
+          for i in $(seq 60); do curl -sf http://127.0.0.1:8700/api/status > /dev/null && break; sleep 2; done
+          curl -sf http://127.0.0.1:8700/api/status | grep -q "\"version\":\"$APP_VERSION\"" || { echo "Library did not start"; cat "$LOCALAPPDATA/DexMentor Library/kb/server.log"; exit 1; }
+          curl -sf -X PUT --data-binary "@corpus/DDS-ME-020 Bolt Torque Chart.xlsx" "http://127.0.0.1:8700/api/admin/files/Bolt%20Torque%20Chart.xlsx"
+          DEXMENTOR_SERVER=http://127.0.0.1:9 ./dist/DexMentor.exe --no-window &
+          sleep 12
+          curl -s http://127.0.0.1:8720/local/status | grep -q '"server_url": "http://[0-9.]*:8700"' || { echo "engineer app did not find the Library"; curl -s http://127.0.0.1:8720/local/status; exit 1; }
+          curl -sf http://127.0.0.1:8720/api/status | grep -q '"documents":1' || { echo "document was not indexed"; exit 1; }
+          echo "smoke test passed"
+      - name: Build the installers
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          & $iscc installer\dexmentor.iss
+          & $iscc installer\library.iss
+          Get-ChildItem dist\*.exe | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}}
+      - name: Publish the release
+        shell: bash
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: |
+          cat > notes.md <<EOF
+          ## DexMentor $APP_VERSION
+
+          | Download | For |
+          | --- | --- |
+          | **DexMentor-Setup.exe** | Every engineer's PC |
+          | **DexMentorLibrary-Setup.exe** | The one server PC that holds the standards |
+
+          Install the Library first, add documents on its Library desk, then install DexMentor on the engineers' PCs: it finds the Library on the office network by itself.
+
+          Windows may show a "Windows protected your PC" notice because the installers are not code-signed: choose *More info*, then *Run anyway*.
+
+          **Change:** $(git log -1 --pretty=%s)
+          EOF
+          gh release create "v$APP_VERSION" dist/DexMentor-Setup.exe dist/DexMentorLibrary-Setup.exe --title "DexMentor $APP_VERSION" --notes-file notes.md --target "${{ github.sha }}" --latest

@@ -74,7 +74,8 @@ async def _anthropic(system, messages, max_tokens):
 
 
 async def _ollama(system, messages):
-    body = {"model": config.OLLAMA_MODEL, "stream": True,
+    # Without num_ctx Ollama silently cuts long prompts, which would drop sources.
+    body = {"model": config.OLLAMA_MODEL, "stream": True, "options": {"num_ctx": 8192, "temperature": 0},
             "messages": [{"role": "system", "content": system}] + messages}
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(300, connect=5)) as c:

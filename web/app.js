@@ -4,7 +4,7 @@ const $ = (id) => document.getElementById(id);
 const MAX_TURNS = 6; // how many earlier question/answer pairs are sent as context
 const store = {
   get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
-  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } },
 };
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 const pad = (n) => String(n).padStart(2, '0');
@@ -14,7 +14,7 @@ const setTheme = (t) => { document.documentElement.dataset.theme = t; store.set(
 setTheme(store.get('theme', matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'));
 $('themeBtn').onclick = () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
 let style = store.get('style', 'english');
-const paintStyle = () => document.querySelectorAll('#style button').forEach((b) => b.classList.toggle('on', b.dataset.v === style));
+const paintStyle = () => document.querySelectorAll('#style button').forEach((b) => { b.classList.toggle('on', b.dataset.v === style); b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', b.dataset.v === style); });
 $('style').onclick = (e) => { const b = e.target.closest('button'); if (b) { style = b.dataset.v; store.set('style', style); paintStyle(); } };
 paintStyle();
 
@@ -30,7 +30,8 @@ function save() {
     chats.unshift(current);
   }
   if (current) { current.updated = Date.now(); chats.sort((a, b) => b.updated - a.updated); }
-  store.set('chats', chats.slice(0, 200)); store.set('current', current?.id || null);
+  let keep = 200; while (!store.set('chats', chats.slice(0, keep)) && keep > 5) keep = Math.floor(keep / 2); // full storage: let the oldest go
+  store.set('current', current?.id || null);
   renderChats();
 }
 function renderChats() {
@@ -38,7 +39,7 @@ function renderChats() {
   $('chatList').innerHTML = chats.map((c) => {
     const age = now - c.updated, g = age < day ? 'Today' : age < 7 * day ? 'This week' : 'Earlier';
     const head = g !== last ? `<div class="grp">${last = g}</div>` : '';
-    return `${head}<div class="chat${c === current ? ' active' : ''}" data-id="${c.id}"><button class="t" title="${esc(c.title)}">${esc(c.title)}</button><button class="x" title="Delete">✕</button></div>`;
+    return `${head}<div class="chat${c === current ? ' active' : ''}" data-id="${c.id}"><button class="t" title="${esc(c.title)}">${esc(c.title)}</button><button class="x" title="Delete this chat" aria-label="Delete this chat">✕</button></div>`;
   }).join('') || '<div class="grp">Nothing logged yet</div>';
 }
 function openChat(c) {
@@ -50,11 +51,12 @@ $('chatList').addEventListener('click', (e) => {
   const row = e.target.closest('.chat'); if (!row) return;
   const c = chats.find((x) => x.id === row.dataset.id);
   if (e.target.classList.contains('x')) {
-    if (!confirm(`Delete "${c.title}"?`)) return;
+    if (busy || !confirm(`Delete "${c.title}"?`)) return;
     chats = chats.filter((x) => x !== c); if (c === current) openChat(null); save();
   } else openChat(c);
 });
 $('newBtn').onclick = () => openChat(null);
+$('clearAll').onclick = () => { if (busy || !chats.length || !confirm('Delete every saved chat on this PC? This cannot be undone.')) return; chats = []; openChat(null); save(); };
 $('menuBtn').onclick = () => $('side').classList.toggle('closed');
 if (innerWidth <= 860) $('side').classList.add('closed');
 
@@ -62,7 +64,7 @@ if (innerWidth <= 860) $('side').classList.add('closed');
 function inline(s, cite) {
   s = esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
     .replace(/(^|[\s(])\*([^*\s][^*]*)\*/g, '$1<i>$2</i>');
-  return cite ? s.replace(/\[(\d{1,2})\]/g, '<button class="cite" data-n="$1" title="Show source $1">$1</button>') : s;
+  return cite ? s.replace(/\[(\d{1,2})\]/g, '<button class="cite" data-n="$1" title="Show source $1" aria-label="Source $1">$1</button>') : s;
 }
 function md(text, cite = true) {
   const lines = text.replace(/\r/g, '').split('\n');
@@ -103,7 +105,7 @@ function split(content) {
   const lastLine = text.slice(text.lastIndexOf('\n') + 1).replace(/[*#\s]/g, '').toLowerCase();
   if (!m && lastLine && 'nextquestions:'.startsWith(lastLine)) text = text.slice(0, text.lastIndexOf('\n')); // half-streamed marker
   const tail = m ? content.slice(m.index + m[0].length) : '';
-  const follow = tail.split('\n').map((s) => s.replace(/^(\[\d\]|[-*\d.)\s])+/, '').trim()).filter((s) => s.length > 3).slice(0, 3);
+  const follow = tail.split('\n').map((s) => s.replace(/^\s*(?:[-*•]|\d{1,2}[.)]|\[\d\])\s+/, '').trim()).filter((s) => s.length > 3).slice(0, 3);
   return { text: text.trim(), follow };
 }
 
@@ -117,12 +119,12 @@ function pipeHtml(bot) {
 }
 function hero() {
   const docs = lib?.docs || [];
-  const starts = docs.slice(0, 4).map((d, i) => `<button><i>${pad(i + 1)}</i>What does ${esc(d.name.replace(/\.[a-z]+$/i, ''))} cover?</button>`).join('');
+  const starts = docs.slice(0, 4).map((d, i) => `<button data-q="What does ${esc(d.name.replace(/\.[a-z]+$/i, ''))} cover?"><i>${pad(i + 1)}</i>What does ${esc(d.name.replace(/\.[a-z]+$/i, ''))} cover?</button>`).join('');
   return `<div class="hero"><div class="cap">Dexterity International · Contractors &amp; Engineers F.Z.C</div>
     <h1>Ask the <em>standards</em>.<br>Check the <em>source</em>.</h1>
     <p>Every answer is written only from your own documents. Each fact carries a numbered balloon: tap it to see the exact page, highlighted.</p>
     <div class="dials"><div class="dial"><b>${lib ? lib.documents : '–'}</b><span>Documents</span></div>
-      <div class="dial"><b>${lib ? lib.chunks : '–'}</b><span>Passages indexed</span></div></div>
+      <div class="dial"><b>${lib ? lib.chunks : '–'}</b><span>Sections read</span></div></div>
     ${starts ? '<div class="cap" style="margin-bottom:8px">Start with</div><div class="starts">' + starts + '</div>' : ''}</div>`;
 }
 function render() {
@@ -132,7 +134,7 @@ function render() {
   $('gauge').hidden = !turns;
   if (turns) {
     const used = Math.min(turns, MAX_TURNS), arc = 75.4;
-    $('gauge').innerHTML = `<svg viewBox="0 0 62 36"><path class="trk" d="M7 33a24 24 0 0148 0"/><path class="val" d="M7 33a24 24 0 0148 0" stroke-dasharray="${arc}" stroke-dashoffset="${arc * (1 - used / MAX_TURNS)}"/></svg>CONTEXT ${used}/${MAX_TURNS}<button type="button">new topic</button>`;
+    $('gauge').innerHTML = `<svg viewBox="0 0 62 36"><path class="trk" d="M7 33a24 24 0 0148 0"/><path class="val" d="M7 33a24 24 0 0148 0" stroke-dasharray="${arc}" stroke-dashoffset="${arc * (1 - used / MAX_TURNS)}"/></svg><span>${used === MAX_TURNS ? 'oldest question drops next' : 'remembers ' + used + ' of ' + MAX_TURNS}</span><button type="button">new topic</button>`; $('gauge').classList.toggle('full', used === MAX_TURNS);
     $('gauge').querySelector('button').onclick = () => openChat(null);
   }
   if (!messages.length) { t.innerHTML = hero(); return; }
@@ -150,13 +152,13 @@ function render() {
     }
     const live = bot.stages && last && busy;
     if (live) a += pipeHtml(bot) + `<div class="trace" id="liveTrace">${traceHtml(bot, true)}</div><div class="card" id="liveCard" data-i="${idx + 1}" hidden></div>`;
-    else if (text) a += `<div class="card" data-i="${idx + 1}">${md(text)}</div>`;
-    if (text && !live && bot.unverified) a += bot.unverified.length
+    else if (text) a += `<div class="card${bot.none ? ' none' : ''}" data-i="${idx + 1}">${bot.none ? '<div class="cap">Not in the library</div>' : ''}${md(text)}</div>`;
+    if (text && !live && bot.unverified && !bot.cut) a += bot.unverified.length
       ? `<div class="chk bad"><b>CHECK THE SOURCE</b> ${bot.unverified.map(esc).join(', ')} ${bot.unverified.length > 1 ? 'are' : 'is'} not found in the cited documents. Do not use ${bot.unverified.length > 1 ? 'these values' : 'this value'} without checking.</div>`
-      : `<div class="chk ok"><b>VALUES CHECKED</b> every number in this answer appears in the cited sources.</div>`;
+      : (bot.none ? '' : `<div class="stamp" title="Every number in this answer appears in the cited sources. It does not prove the right row was used: check the highlighted page."><svg viewBox="0 0 20 20"><path d="M4 10.5l4 4 8-9"/></svg><b>NUMBERS FOUND IN SOURCES</b><span>${(text.match(/\d+(?:\.\d+)?/g) || []).length} checked · confirm on the sheet</span></div>`);
     if (text && !live && bot.english) a += `<details class="meta"><summary>English original</summary><div class="card">${md(bot.english)}</div></details>`;
     if (bot.error) a += `<div class="err">${esc(bot.error)}</div>`;
-    if (text && !live && bot.took) a += `<details class="meta"><summary>Answered in ${bot.took} s · ${bot.sources?.length || 0} sources${bot.by ? ' · ' + esc(bot.by) : ''}${bot.trace?.length ? ' · how it was worked out' : ''}</summary><div class="trace">${traceHtml(bot, false)}</div></details>`;
+    if (text && !live && bot.took) a += `<details class="meta"><summary>${bot.none ? 'No answer' : 'Answered'} in ${bot.took} s · ${bot.sources?.length || 0} sources${bot.by ? ' · ' + esc(bot.by) : ''}${bot.trace?.length ? ' · how it was worked out' : ''}</summary><div class="trace">${traceHtml(bot, false)}</div></details>`;
     if (text && last && !busy && bot.by === 'this PC' && serverLLM) a += '<button class="ghost again" data-again="1">Get a deeper answer from the office model</button>';
     if (follow.length && last && !busy) a += '<div class="next"><div class="cap">Continue the thread</div>' + follow.map((f) => `<button>${esc(f)}</button>`).join('') + '</div>';
     html += `<div class="turn${idx ? ' fu' : ''}${idx < cutoff ? ' stale' : ''}"><div class="node">Q${pad(qn)}</div>
@@ -186,7 +188,8 @@ function paintCard() {
   const card = $('liveCard'), bot = messages[messages.length - 1];
   if (!card || !bot) return;
   const text = split((bot.content || '').slice(0, bot.shown || 0)).text;
-  card.hidden = !text; if (!text) return;
+  card.hidden = !text; if (!text || card.dataset.len === String(text.length)) return;
+  card.dataset.len = text.length;
   const before = card.querySelectorAll('.cite').length;
   card.innerHTML = md(text);
   const cites = card.querySelectorAll('.cite');
@@ -198,12 +201,13 @@ function paintCard() {
   let host = card.lastElementChild; if (host && /^(UL|OL)$/.test(host.tagName)) host = host.lastElementChild;
   if (host && !host.classList.contains('tblWrap')) host.insertAdjacentHTML('beforeend', '<span class="pen"></span>');
 }
+const calm = matchMedia('(prefers-reduced-motion: reduce)').matches; // no pen animation for people who asked for less motion
 function pump(bot) {
   const tickPen = () => {
     if (!bot.stages) return;
     const total = (bot.content || '').length; bot.shown = bot.shown || 0;
     if (bot.shown < total) {
-      bot.shown = Math.min(total, bot.shown + Math.max(1, Math.ceil((total - bot.shown) / 18)));
+      bot.shown = calm ? total : Math.min(total, bot.shown + Math.max(1, Math.ceil((total - bot.shown) / 18)));
       const th = $('thread'), pinned = th.scrollHeight - th.scrollTop - th.clientHeight < 80;
       paintCard(); if (pinned) th.scrollTop = th.scrollHeight;
     }
@@ -219,7 +223,7 @@ $('thread').addEventListener('click', (e) => {
     const s = messages[idx]?.sources?.find((x) => x.n == b.dataset.n);
     if (s) openSource(s);
   } else if (b.dataset.again) { const q = messages[messages.length - 2].content; messages.splice(-2); ask(q, true); }
-  else if (b.closest('.next') || b.closest('.starts')) ask(b.textContent.replace(/^\d\d/, ''));
+  else if (b.closest('.next') || b.closest('.starts')) ask(b.dataset.q || b.textContent);
 });
 
 // ---------- asking ----------
@@ -240,20 +244,26 @@ const stage = (bot, name) => { const i = bot.stages.indexOf(name); if (i > bot.s
 function showSources(bot, sources, query) {
   bot.sources = sources; bot.query = query;
   trace(bot, sources.length ? `Found ${sources.length} matching passage${sources.length > 1 ? 's' : ''} in ${new Set(sources.map((s) => s.doc)).size} document(s)` : 'Nothing in the library matches', 'hit');
-  if (sources[0] && innerWidth > 860) openSource(sources[0]); else render();
+  if (sources[0] && innerWidth > 1100) openSource(sources[0]); else render();
   sources.forEach((s, i) => setTimeout(() => { if (bot.stages && !bot.content) trace(bot, `Reading [${s.n}] ${s.doc} · ${s.loc}`, 'read'); }, 350 * (i + 1)));
   document.querySelector('.sheet')?.classList.add('scanning');
 }
 // The model on this PC, reached through the desktop launcher.
 async function localLLM(req, onText, onNote) {
+  let finished = '';
   const res = await post('llm/v1/chat/completions', { stream: true, temperature: 0, max_tokens: req.max_tokens,
     messages: [{ role: 'system', content: req.system + (local?.system_suffix || '') }, ...req.messages] });
   await readLines(res, (line) => {
-    if (!line.startsWith('data:') || line.includes('[DONE]')) return;
-    const d = JSON.parse(line.slice(5)).choices?.[0]?.delta || {};
+    if (!line.startsWith('data:')) return;
+    if (line.includes('[DONE]')) { finished = finished || 'stop'; return; }
+    const j = JSON.parse(line.slice(5)); if (j.error) throw new Error('The answer was cut off. Ask again.');
+    const ch = j.choices?.[0] || {}, d = ch.delta || {};
+    if (ch.finish_reason) finished = ch.finish_reason;
     if (d.reasoning_content && onNote) onNote(d.reasoning_content);
     if (d.content) onText(d.content);
   });
+  if (!finished) throw new Error('The model stopped before finishing. Ask again.');
+  return finished;
 }
 const noteTaker = (bot) => { let n = ''; return (t) => { n += t; trace(bot, 'Model notes: ' + n.replace(/\s+/g, ' ').slice(-220), 'note', true); }; };
 const wrote = (bot) => { if (!bot.wrote) { bot.wrote = 1; trace(bot, 'Writing the answer', 'write'); document.querySelector('.sheet')?.classList.remove('scanning'); } };
@@ -267,9 +277,10 @@ async function askLocal(bot, history) {
   stage(bot, 'Search'); trace(bot, `Searching ${lib ? lib.documents + ' documents, ' + lib.chunks + ' passages' : 'the library'}`, 'search');
   const prep = await (await post('api/prepare', { messages: history, style, query })).json();
   showSources(bot, prep.sources, prep.query);
-  if (!prep.sources.length || prep.skip_model) { trace(bot, 'The library does not cover this question', 'hit'); bot.content = prep.message; stage(bot, 'Write'); return; }
+  if (!prep.sources.length || prep.skip_model) { trace(bot, 'The library does not cover this question', 'hit'); bot.none = true; bot.content = prep.message; stage(bot, 'Write'); closeRef(); return; }
   stage(bot, 'Read');
-  await localLLM(prep, (t) => { wrote(bot); bot.content += t; stage(bot, 'Write'); }, noteTaker(bot));
+  const end = await localLLM(prep, (t) => { wrote(bot); bot.content += t; stage(bot, 'Write'); }, noteTaker(bot));
+  if (end === 'length') bot.error = 'This answer reached its length limit and may be incomplete.';
   bot.content = tidy(bot.content);
   if (prep.tanglish_step) { // the PC's small model cannot write Tanglish reliably: the office model rewords, code checks it
     const english = split(bot.content).text; await penDone(bot);
@@ -277,6 +288,7 @@ async function askLocal(bot, history) {
     const r = await (await post('api/tanglish', { answer: english })).json();
     if (r.ok) { bot.english = english; bot.content = r.text; bot.shown = 0; } else trace(bot, r.reason, 'hit');
   }
+  if (end !== 'stop') return; // an unfinished answer gets no check mark
   const chk = await (await post('api/verify', { answer: bot.english || bot.content, grounding: prep.grounding })).json();
   bot.unverified = chk.unverified;
 }
@@ -286,6 +298,7 @@ function tidy(a) {
   return s.length > 25 ? s : a.trim();
 }
 async function askServer(bot, history) {
+  let ended = false;
   const res = await post('api/chat', { style, messages: history });
   await readLines(res, (line) => {
     const ev = JSON.parse(line);
@@ -297,13 +310,14 @@ async function askServer(bot, history) {
     else if (ev.type === 'check') bot.unverified = ev.unverified;
     else if (ev.type === 'status' && /tanglish/i.test(ev.message)) trace(bot, 'Rewording in Tanglish, then checking every number', 'rw');
     else if (ev.type === 'replace') { bot.english = ev.english; bot.content = ev.text; bot.shown = 0; }
-    else if (ev.type === 'delta') { wrote(bot); bot.content += ev.text; stage(bot, 'Write'); }
+    else if (ev.type === 'delta') { wrote(bot); bot.content += ev.text; stage(bot, 'Write'); if (/^(The documents do not cover this|I could not find anything)/.test(bot.content)) bot.none = true; }
+    else if (ev.type === 'done') ended = true;
     else if (ev.type === 'error') { bot.error = ev.message; render(); }
   });
 }
 async function ask(q, forceServer = false) {
   q = q.trim(); if (!q || busy) return;
-  busy = true; $('send').disabled = true;
+  busy = true; $('send').disabled = true; closeRef();
   if (!current) messages = [];
   messages.push({ role: 'user', content: q });
   const history = messages.slice(-(MAX_TURNS * 2 + 1)).map((m) => ({ role: m.role, content: m.content }));
@@ -318,7 +332,13 @@ async function ask(q, forceServer = false) {
     if (useLocal) setTimeout(refreshLocal, 1500);
     await (useLocal ? askLocal : askServer)(bot, history);
     if (useLocal) refreshLocal();
-  } catch (err) { bot.error = 'Something went wrong: ' + err.message; }
+  } catch (err) {
+    const offline = /fetch|network|reach/i.test(err.message);
+    bot.error = offline ? 'Cannot reach the Library PC. Check the network, then ask again: your question is back in the box.' : err.message;
+    if (offline) { $('input').value = q; grow(); refresh(); }
+    if (bot.content) bot.error += ' The text above is incomplete.'; bot.cut = true;
+  }
+  $('sr').textContent = bot.error || (bot.none ? 'The library does not cover this.' : `Answer ready, ${bot.sources.length} sources.`);
   await penDone(bot); document.querySelector('.sheet')?.classList.remove('scanning');
   clearInterval(tick); delete bot.shown; delete bot.wrote; bot.took = Math.max(1, Math.round((Date.now() - started) / 1000));
   delete bot.stages; delete bot.stage; delete bot.secs; busy = false; $('send').disabled = false;
@@ -344,6 +364,7 @@ async function openSource(s) {
   try {
     const r = await fetch(`api/chunks/${s.chunk_id}`); const c = await r.json();
     if (!r.ok) throw new Error(c.detail);
+    if (c.name !== s.doc) throw new Error('The library has changed since this answer was written. Ask the question again.');
     if (isPdf && ref) { ref.pages = c.pages; label(); }
     else $('refBody').innerHTML = `<div class="textRef">${md(c.text, false)}</div>`;
   } catch (e) { $('refBody').innerHTML = `<div class="textRef">This source is no longer available. ${esc(e.message || '')}</div>`; }
@@ -358,6 +379,7 @@ $('prevPg').onclick = () => { if (ref && ref.page > 1) { ref.page--; showPage();
 $('nextPg').onclick = () => { if (ref && (!ref.pages || ref.page < ref.pages)) { ref.page++; showPage(); } };
 $('zoomBtn').onclick = () => $('zoomBtn').classList.toggle('on', $('refBody').classList.toggle('zoomed'));
 function closeRef() { $('ref').hidden = true; ref = null; activeSrc = null; }
+addEventListener('keydown', (e) => { if (e.key !== 'Escape') return; if (!$('ref').hidden) { closeRef(); render(); } else if (!$('desk').hidden) $('desk').hidden = true; });
 $('refClose').onclick = () => { closeRef(); render(); };
 
 // ---------- dictation (where the browser supports it) ----------
@@ -379,8 +401,10 @@ async function refreshLocal() {
   const c = $('modelCard'); c.hidden = false;
   const mb = (n) => (n / 1048576).toFixed(0);
   const acc = local.accel, accLine = !acc ? '' : acc.mode === 'gpu' ? ` Using graphics card: ${esc(acc.gpu)} (${acc.gpu_s} s vs ${acc.cpu_s ?? '–'} s on the processor).` : acc.gpu ? ` ${esc(acc.gpu)} was tested: the processor is faster here${acc.gpu_s ? ` (${acc.cpu_s} s vs ${acc.gpu_s} s)` : ''}.` : '';
+  const ver = `<div class="ver">DexMentor ${esc(local.version || '')}${status && local.version && status.version && local.version !== status.version && status.version !== 'dev' && local.version !== 'dev' ? ` · <a href="https://github.com/dexterity-admin/oil-gas-design-queries/releases/latest" target="_blank" rel="noopener">update to ${esc(status.version)}</a>` : ''}</div>`;
+  setTimeout(() => c.insertAdjacentHTML('beforeend', ver));
   if (local.state === 'tuning') {
-    c.innerHTML = `<b><i class="led busy"></i>Tuning for this PC</b>${esc(local.step || '')}…`;
+    c.innerHTML = `<b><i class="led busy"></i>Checking this PC's speed</b>${esc(local.step || '')}…`;
   } else if (local.state === 'downloading') {
     const pct = local.total ? Math.round(local.done / local.total * 100) : 0;
     c.innerHTML = `<b><i class="led busy"></i>${esc(local.step || 'Preparing')}</b>${mb(local.done)} of ${local.total ? mb(local.total) : '?'} MB · ${pct}%<div class="bar"><i style="width:${pct}%"></i></div>`;
@@ -391,7 +415,7 @@ async function refreshLocal() {
   } else {
     const on = local.state === 'running';
     c.innerHTML = `<b><i class="led ${on ? 'ok' : local.state === 'starting' ? 'busy' : ''}"></i>${on ? 'Model loaded' : local.state === 'starting' ? 'Loading model' : 'Model standing by'}</b>${esc(local.model)}. ` +
-      accLine + (on ? ' Unloads by itself when idle.<button class="ghost" id="unBtn">Free the memory now</button>' : 'Loads when you ask.') +
+      accLine + (on ? ' Unloads by itself when idle.<button class="ghost" id="unBtn">Stop the model now</button>' : 'Loads when you ask.') +
       (local.error ? `<div class="err">${esc(local.error)}</div>` : '');
     if (on) $('unBtn').onclick = async () => { await fetch('local/unload', { method: 'POST' }); refreshLocal(); };
   }
@@ -445,7 +469,15 @@ async function openDesk() {
   $('desk').hidden = false;
   const c = await (await fetch('api/admin/check', { headers: adminHeaders() })).json();
   admin = c.admin; $('drop').hidden = !admin; $('pinBar').hidden = admin;
-  paintOffice(); paintFolders(); poll();
+  paintOffice(); paintFolders(); paintAdmin(c); poll();
+}
+// Admin PIN and stopping the Library: the Library has no window of its own to close.
+function paintAdmin(c) {
+  const el = $('adminCard'); el.hidden = !admin; if (!admin) return;
+  el.innerHTML = `<b><i class="led ${c.pin_set ? 'ok' : ''}"></i>Managing from other PCs · ${c.pin_set ? 'PIN set' : 'off'}</b>Without a PIN the library can only be changed on this PC. Set one to manage it from any PC on the network.
+    <div class="row"><input id="newPin" type="password" placeholder="New PIN, 8 characters or more" autocomplete="new-password"><button class="ghost" id="setPin">${c.pin_set ? 'Change PIN' : 'Set PIN'}</button><button class="ghost" id="quitLib">Stop the Library</button></div><div id="adminErr" class="err" role="alert"></div>`;
+  $('setPin').onclick = async () => { const v = $('newPin').value; const r = await fetch('api/admin/pin', { method: 'POST', headers: { 'Content-Type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ pin: v }) }); const j = await r.json(); if (!r.ok) { $('adminErr').textContent = j.detail; return; } pin = v; sessionStorage.setItem('pin', v); openDesk(); };
+  $('quitLib').onclick = async () => { if (!confirm('Stop DexMentor Library? Engineers will not get answers until it is started again.')) return; await fetch('api/admin/quit', { method: 'POST', headers: adminHeaders() }); $('adminErr').textContent = 'The Library is stopping. Start it again from the Start menu.'; };
 }
 async function paintFolders(list) {
   list = list || await (await fetch('api/admin/folders')).json(); const c = $('folderCard'); c.hidden = !admin && !list.length;
@@ -461,13 +493,13 @@ async function paintFolders(list) {
 }
 function paintDesk() {
   const s = status, docs = lib?.docs || [];
-  $('deskSummary').textContent = `${s.documents} documents · ${s.chunks} passages · meaning search ${s.index.embeddings} · engineers connect to ${s.address}`;
+  $('deskSummary').textContent = `${s.documents} documents · ${s.chunks} sections read · version ${s.version} · engineers' PCs connect to ${s.address}`;
   const log = Object.fromEntries((s.index.log || []).map((e) => [e.name, e]));
   let prog = jobs.map((j) => `<div class="job ${j.state}"><span>${esc(j.name)}</span><div class="bar"><i style="width:${j.pct}%"></i></div><span>${j.state === 'err' ? esc(j.msg) : j.pct < 100 ? j.pct + '%' : 'received'}</span></div>`).join('');
   if (s.index.state !== 'idle') prog += `<div class="pipe"><div class="st done"><i></i>Receive</div><div class="ln done"></div><div class="st ${s.index.state === 'indexing' ? 'now' : 'done'}"><i></i>Read</div><div class="ln ${s.index.state === 'indexing' ? 'now' : 'done'}"></div><div class="st ${s.index.state === 'embedding' ? 'now' : ''}"><i></i>Index</div><div class="ln"></div><div class="st"><i></i>Ready</div><span class="clock">${s.index.done}/${s.index.total}</span></div><div class="job"><span>${esc(s.index.current || 'building the meaning index')}</span></div>`;
   $('deskProgress').innerHTML = prog;
-  $('register').innerHTML = docs.length ? `<table><thead><tr><th>No.</th><th>Document</th><th>Type</th><th>Pages</th><th>Passages</th><th>Tables</th><th></th></tr></thead><tbody>` +
-    docs.map((d, i) => `<tr data-id="${d.id}" class="${inspecting === d.id ? 'sel' : ''}"><td class="mono">${pad(i + 1)}</td><td class="nm">${esc(d.name)}${d.folder ? `<small style="color:var(--mute)">${d.linked ? '⇄ ' : ''}${esc(d.folder)}</small>` : ''}${d.note ? `<small>${esc(d.note)}</small>` : ''}${log[d.name]?.error ? `<small>${esc(log[d.name].error)}</small>` : ''}</td><td class="mono">${esc(d.kind.toUpperCase())}</td><td class="mono">${d.pages}</td><td class="mono">${d.chunks}</td><td class="mono">${d.tables}</td><td>${admin && !d.linked ? '<button class="rm" title="Remove from the library">✕</button>' : ''}</td></tr>`).join('') + '</tbody></table>'
+  $('register').innerHTML = docs.length ? `<table><thead><tr><th>No.</th><th></th><th>Document</th><th>Type</th><th>Pages</th><th>Passages</th><th>Tables</th><th></th></tr></thead><tbody>` +
+    docs.map((d, i) => `<tr data-id="${d.id}" class="${inspecting === d.id ? 'sel' : ''}"><td class="mono">${pad(i + 1)}</td><td><i class="led ${log[d.name]?.error ? 'bad' : d.note || !d.chunks ? 'busy' : 'ok'}" title="${log[d.name]?.error ? 'Could not be read' : d.note || !d.chunks ? 'Check: ' + esc(d.note || 'no text found') : 'Read'}"></i></td><td class="nm">${esc(d.name)}${d.folder ? `<small style="color:var(--mute)">${d.linked ? '⇄ ' : ''}${esc(d.folder)}</small>` : ''}${d.note ? `<small>${esc(d.note)}</small>` : ''}${log[d.name]?.error ? `<small>${esc(log[d.name].error)}</small>` : ''}</td><td class="mono">${esc(d.kind.toUpperCase())}</td><td class="mono">${d.pages}</td><td class="mono">${d.chunks}</td><td class="mono">${d.tables}</td><td>${admin && !d.linked ? '<button class="rm" title="Remove from the library">Remove</button>' : ''}</td></tr>`).join('') + '</tbody></table>'
     : '<p class="hint">The library is empty. Add your standards, design bases and reference documents to begin.</p>';
   const failed = (s.index.errors || []).length; if (failed) $('deskProgress').innerHTML += `<div class="job err">${failed} file(s) could not be read: ${esc(s.index.errors.join('; '))}</div>`;
 }
@@ -496,7 +528,7 @@ function sendFiles(files) {
 }
 $('fileInput').onchange = (e) => { sendFiles(e.target.files); e.target.value = ''; };
 ['dragover', 'dragleave', 'drop'].forEach((t) => $('drop').addEventListener(t, (e) => { e.preventDefault(); $('drop').classList.toggle('over', t === 'dragover'); if (t === 'drop') sendFiles(e.dataTransfer.files); }));
-$('pinBtn').onclick = async () => { pin = $('pinInput').value; sessionStorage.setItem('pin', pin); await openDesk(); if (!admin) { pin = ''; $('pinInput').value = ''; $('pinInput').placeholder = 'Wrong PIN, try again'; } };
+$('pinBtn').onclick = async () => { pin = $('pinInput').value; sessionStorage.setItem('pin', pin); await openDesk(); if (!admin) { pin = ''; $('pinInput').value = ''; $('pinErr').textContent = 'That PIN is not right.'; } else $('pinErr').textContent = ''; };
 async function paintOffice(o) {
   o = o || await (await fetch('api/admin/office')).json(); const c = $('officeCard'); c.hidden = false;
   const state = !o.enabled ? 'Not connected' : !o.reachable ? 'Cannot reach that PC' : !o.model_present ? 'Reached, but the model is not installed there' : 'Connected';

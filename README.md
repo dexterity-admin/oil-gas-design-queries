@@ -1,17 +1,79 @@
-# DexMentor
+<p align="center">
+  <a href="https://dexterity-admin.github.io/oil-gas-design-queries/"><img src="docs/banner.svg" alt="DexMentor: ask the standards, check the source" width="100%"></a>
+</p>
 
-Ask questions about your own standards and design documents and get a plain-language,
-cited answer, with the exact page shown and highlighted next to it.
+<p align="center">
+  <a href="https://github.com/dexterity-admin/oil-gas-design-queries/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/dexterity-admin/oil-gas-design-queries?label=latest%20release&color=f9af46&labelColor=071a1d&style=for-the-badge"></a>
+  <a href="https://github.com/dexterity-admin/oil-gas-design-queries/actions/workflows/release.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/dexterity-admin/oil-gas-design-queries/release.yml?label=build&labelColor=071a1d&style=for-the-badge"></a>
+  <a href="https://github.com/dexterity-admin/oil-gas-design-queries/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/dexterity-admin/oil-gas-design-queries/total?color=2c8c98&labelColor=071a1d&style=for-the-badge"></a>
+  <a href="https://github.com/dexterity-admin/oil-gas-design-queries/commits"><img alt="Last update" src="https://img.shields.io/github/last-commit/dexterity-admin/oil-gas-design-queries/claude/tender-davinci-kga1tg?label=last%20update&color=2c8c98&labelColor=071a1d&style=for-the-badge"></a>
+</p>
 
-## How it is built
+<h3 align="center">
+  <a href="https://dexterity-admin.github.io/oil-gas-design-queries/">🌐 Landing page</a> &nbsp;·&nbsp;
+  <a href="https://github.com/dexterity-admin/oil-gas-design-queries/releases/latest/download/DexMentor-Setup.exe">⬇ DexMentor for engineers</a> &nbsp;·&nbsp;
+  <a href="https://github.com/dexterity-admin/oil-gas-design-queries/releases/latest/download/DexMentorLibrary-Setup.exe">⬇ DexMentor Library for the server PC</a>
+</h3>
 
-- **One server** (`server/`) holds the documents, the search index and the connection to the
-  language model. It runs on one always-on machine.
-- **One thin web UI** (`web/`) is what engineers use. It runs no models and stores no documents,
-  so it stays light on old office PCs. The same UI will be wrapped as the desktop app and the Android app.
-- `legacy/` is the original two-app PySide6 version, kept for reference.
+---
 
-## Run the server
+DexMentor answers engineers' questions from **your company's own standards, design bases and reference documents**. Every fact is pinned to the exact page it came from, and nothing leaves your office.
+
+<p align="center"><img src="docs/demo.gif" alt="DexMentor answering a question and a follow-up, with the source page highlighted" width="92%"></p>
+
+## What it does
+
+| | |
+| --- | --- |
+| **Cited answers** | Each number in an answer carries a balloon. One click opens the original page with the passage highlighted. |
+| **Reads the table, not just the words** | Code finds the row and column that match the question and does percentage sums itself. The model only words the answer. |
+| **Says when it does not know** | If the library never mentions what is asked, DexMentor refuses and shows the closest passages instead of guessing. |
+| **Numbers are checked** | Every number in an answer is checked against the sources. Anything not found is flagged in red. |
+| **Private** | Documents, index and models stay on your own PCs. No cloud service is used. |
+| **Light** | The engineer app is about 9 MB. It runs a small model only while answering, then frees the memory. |
+
+## The two programs
+
+<p align="center"><img src="docs/library-desk.jpg" alt="The Library desk" width="92%"></p>
+
+| Program | Install on | What it does |
+| --- | --- | --- |
+| **DexMentor Library** | One always-on PC | Holds and indexes the documents. Drop files in or link a shared network folder (sub-folders included, files are never changed). Shows exactly what was read from each document. |
+| **DexMentor** | Every engineer's PC | Finds the Library on the office network by itself, offers a one-time model download, and answers questions. |
+
+### Set-up in three steps
+
+1. Run **DexMentorLibrary-Setup.exe** on the server PC. On the Library desk, add documents or link the folder that holds them.
+2. Run **DexMentor-Setup.exe** on each engineer's PC. It connects to the Library automatically. Press *Download model* once.
+3. Ask a question.
+
+Windows shows a "Windows protected your PC" notice for the installers because they are not code-signed: choose *More info*, then *Run anyway*. When Windows Firewall asks about DexMentor Library, allow it on private networks, or the engineers' PCs will not find it.
+
+### Office model
+
+<a name="office-model"></a>English answers work on every PC with the small built-in model. For deeper answers, Simple English and Tanglish, run [Ollama](https://ollama.com) on one stronger PC and link it from the Library desk (*Office model*).
+
+```bash
+ollama pull gemma2:9b
+```
+
+Gemma 2 9B was the best of the 7 to 10B models we tested on our question set (29 of 30, with no invented or wrong values). Set the environment variable `OLLAMA_HOST=0.0.0.0` on that PC so the Library can reach it.
+
+## How answers are kept honest
+
+```
+question ─► rewrite follow-ups ─► search (keywords + meaning)
+         ─► code picks the table row / column and does the percent arithmetic
+         ─► code refuses if the library never mentions the subject
+         ─► model writes the answer from the sources only
+         ─► code checks every number against the sources ─► stamp or red flag
+```
+
+The matcher, the arithmetic, the coverage check and the number check are plain code with unit tests (`tests/`), not model behaviour. When the matcher is unsure it says nothing rather than point at a row.
+
+**Limits you should know.** The number check proves a value was not invented; it cannot prove it came from the right place, so the highlighted page still matters. Scores come from a small set of test documents, not your library. Scanned PDFs need Tesseract installed on the server PC. Old `.doc`, `.xls` and `.ppt` files are not read.
+
+## For developers
 
 ```bash
 pip install -r requirements.txt
@@ -21,38 +83,20 @@ pip install -r requirements.txt
 python -m server
 ```
 
-Copy PDF, Word, Excel and PowerPoint files into `library/` (sub-folders are fine), then open
-http://127.0.0.1:8700. New and changed files are indexed on start, or via *Library → Re-scan*.
-
-## Settings (environment variables)
-
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `LIBRARY_DIR` | `./library` | Folder with your documents |
-| `DATA_DIR` | `./kb` | Index and page-image cache |
-| `HOST` / `PORT` | `127.0.0.1` / `8700` | Use `HOST=0.0.0.0` to serve the office network |
-| `LLM_PROVIDER` | `anthropic` if a key is set, else `none` | `anthropic`, `ollama` or `none` |
-| `ANTHROPIC_API_KEY` | | Key for the cloud model |
-| `ANTHROPIC_MODEL` | `claude-haiku-5-5` | Cloud model |
-| `OLLAMA_URL` / `OLLAMA_MODEL` | `http://127.0.0.1:11434` / `granite3.3:8b` | Self-hosted model |
-| `EMBEDDINGS` | `auto` | `off` for keyword search only |
-| `APP_NAME` | `DexMentor` | Name shown in the UI |
-
-With `LLM_PROVIDER=none` the app still finds and shows the matching passages and pages.
-Scanned PDFs are OCR'd if Tesseract is installed on the server.
-
-## Desktop app with the model on the user's PC
-
-`desktop/dexmentor.py` is a small launcher (standard library only) for each engineer's PC:
-
 ```bash
-DEXMENTOR_SERVER=http://office-server:8700 python desktop/dexmentor.py
+python tests/test_grounding.py
 ```
 
-It opens the DexMentor window, offers a one-time download of the model named in
-`desktop/models.json` plus the llama.cpp CPU runner, loads the model only when a question is
-asked, and unloads it after `idle_minutes`. The server still does all searching; the PC only
-writes the answer. To try a different model, change `desktop/models.json`.
+| Path | What |
+| --- | --- |
+| `server/` | Library server: ingestion, search, grounding, chat pipeline, admin API |
+| `web/` | The interface served by the Library (engineer app and Library desk) |
+| `desktop/` | Engineer-PC launcher: model download, on-demand model, LAN discovery |
+| `installer/` | Inno Setup scripts for both Windows installers |
+| `eval/` | Question set and harness used to compare models on GitHub Actions |
+| `site/` | The landing page (GitHub Pages) |
+| `legacy/` | The original PySide6 prototype |
 
-The server has no login of its own yet: keep it on `127.0.0.1` or the office network, or put it
-behind Cloudflare Access.
+Every push builds both installers, smoke-tests them on Windows and publishes a [release](https://github.com/dexterity-admin/oil-gas-design-queries/releases). The landing page is redeployed on every push.
+
+<p align="center"><sub>Built by <b>Dexterity International</b> · Contractors &amp; Engineers F.Z.C</sub></p>

@@ -21,6 +21,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 import webbrowser
 import zipfile
@@ -38,7 +39,7 @@ SETTINGS_FILE = DATA / "settings.json"
 settings = {"server_url": os.getenv("DEXMENTOR_SERVER", "http://127.0.0.1:8700")}
 state = {"state": "missing", "done": 0, "total": 0, "step": "", "error": "",
          "model": MANIFEST["model"]["name"], "size_mb": MANIFEST["model"]["size_mb"],
-         "system_suffix": MANIFEST["model"].get("system_suffix", "")}
+         "system_suffix": MANIFEST["model"].get("system_suffix", ""), "version": MANIFEST.get("version", "dev")}
 proc = None
 last_used = 0.0
 lock = threading.Lock()
@@ -46,15 +47,36 @@ lock = threading.Lock()
 
 def load_settings():
     DATA.mkdir(parents=True, exist_ok=True)
-    if SETTINGS_FILE.exists():
+    try:
         settings.update(json.loads(SETTINGS_FILE.read_text()))
+    except (OSError, ValueError):
+        pass  # first run, or a damaged file: start from the defaults
+
+
+def save_settings():
+    tmp = SETTINGS_FILE.with_suffix(".tmp")  # write beside, then swap: a crash never leaves half a file
+    tmp.write_text(json.dumps(settings))
+    tmp.replace(SETTINGS_FILE)
+
+
+DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # office-network calls never go through a web proxy
 
 
 def server_ok(url=None):
     try:
-        with urllib.request.urlopen((url or settings["server_url"]).rstrip("/") + "/api/status", timeout=3) as r:
-            return r.status == 200
+        with DIRECT.open((url or settings["server_url"]).rstrip("/") + "/api/status", timeout=3) as r:
+            return r.status == 200 and "version" in json.load(r)
     except Exception:
+        return False
+
+
+def _private(url):
+    """Only addresses inside the office network are accepted from discovery."""
+    import ipaddress
+    try:
+        ip = ipaddress.ip_address(url.split("://", 1)[1].rsplit(":", 1)[0].strip("[]"))
+        return ip.is_private or ip.is_loopback
+    except (ValueError, IndexError):
         return False
 
 
@@ -86,8 +108,8 @@ def discover(wait=2.0):
                 url = json.loads(data).get("url", "")
                 # The Library says where it thinks it is; the address the answer came from is tried too,
                 # which is what works when the Library PC has several network adapters.
-                for u in (url, "http://%s:%s" % (sender[0], url.rsplit(":", 1)[-1].strip("/"))):
-                    if u.startswith("http") and u not in found:
+                for u in ("http://%s:%s" % (sender[0], url.rsplit(":", 1)[-1].strip("/")), url):
+                    if u.startswith("http://") and _private(u) and u not in found:
                         found.append(u)
             except (OSError, ValueError):
                 pass
@@ -103,7 +125,7 @@ def auto_connect():
     for url in discover():
         if server_ok(url):
             settings["server_url"] = url
-            SETTINGS_FILE.write_text(json.dumps(settings))
+            save_settings()
             return True
     return False
 
@@ -147,50 +169,61 @@ def refresh_state():
 
 
 # ---------- one-time download ----------
-def _fetch(url, dest, step):
-    """Download with resume, so a dropped office connection does not restart 1 GB."""
+def _fetch(url, dest, step, sha256=""):
+    """Download with resume and retries, so a dropped or stalled connection does not restart 1 GB."""
+    import hashlib
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_suffix(dest.suffix + ".part")
-    have = part.stat().st_size if part.exists() else 0
-    req = urllib.request.Request(url, headers={"User-Agent": "DexMentor", **({"Range": "bytes=%d-" % have} if have else {})})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        if have and r.status != 206:
-            have = 0
-        total = have + int(r.headers.get("Content-Length") or 0)
-        state.update(step=step, done=have, total=total)
-        with open(part, "ab" if have else "wb") as f:
-            while True:
-                buf = r.read(1 << 18)
-                if not buf:
-                    break
-                f.write(buf)
-                state["done"] += len(buf)
-    if total and part.stat().st_size < total:
-        raise IOError("The download stopped early. Press download again to resume.")
+    last = None
+    for attempt in range(8):
+        have = part.stat().st_size if part.exists() else 0
+        req = urllib.request.Request(url, headers={"User-Agent": "DexMentor", **({"Range": "bytes=%d-" % have} if have else {})})
+        try:
+            with urllib.request.urlopen(req, timeout=45) as r:
+                if have and r.status != 206:
+                    have = 0
+                total = have + int(r.headers.get("Content-Length") or 0)
+                state.update(step=step, done=have, total=total)
+                with open(part, "ab" if have else "wb") as f:
+                    while True:
+                        buf = r.read(1 << 18)
+                        if not buf:
+                            break
+                        f.write(buf)
+                        state["done"] += len(buf)
+            if not total or part.stat().st_size >= total:
+                break
+        except urllib.error.HTTPError as e:
+            if e.code == 416:  # the server says there is nothing left to send: the file is complete
+                break
+            last = e
+        except OSError as e:
+            last = e
+        time.sleep(min(20, 2 + attempt * 3))
+    else:
+        raise IOError("The download kept stopping (%s). Press download again to resume." % last)
+    if sha256:
+        h = hashlib.sha256()
+        with open(part, "rb") as f:
+            for block in iter(lambda: f.read(1 << 20), b""):
+                h.update(block)
+        if h.hexdigest() != sha256.lower():
+            part.unlink()
+            raise IOError("The downloaded file did not match its expected fingerprint and was deleted.")
     part.replace(dest)
 
 
-def _latest_runtime_url():
-    rt = MANIFEST["runtime"]
-    api = "https://api.github.com/repos/%s/releases?per_page=15" % rt["github_repo"]
-    with urllib.request.urlopen(urllib.request.Request(api, headers={"User-Agent": "DexMentor"}), timeout=30) as r:
-        releases = json.load(r)
-    match = [a for rel in releases for a in rel.get("assets", []) if re.search(rt["asset_pattern"], a["name"])]
-    if not match:
-        raise IOError("No CPU build of the model runner was found in the recent llama.cpp releases.")
-    return match[0]["browser_download_url"]
-
-
-def _unzip(url, folder, step):
+def _unzip(url, folder, step, sha256=""):
     zip_path = DATA / folder / "runner.zip"
-    _fetch(url, zip_path, step)
+    _fetch(url, zip_path, step, sha256)
     with zipfile.ZipFile(zip_path) as z:
         z.extractall(DATA / folder)
     zip_path.unlink()
 
 
 def _start(kind):
-    threads = max(1, (os.cpu_count() or 4) // 2)  # physical cores; leaves room for other software
+    n = os.cpu_count() or 4
+    threads = n if n <= 4 else n // 2  # small CPUs have no spare threads to leave idle; big ones keep half free
     flags = 0x08000000 if os.name == "nt" else 0  # no console window on Windows
     cmd = runtime_cmd(kind) + ["-m", str(model_path()), "-c", str(MANIFEST["model"]["context"]),
                                "--host", "127.0.0.1", "--port", str(LLM_PORT), "-t", str(threads)]
@@ -234,7 +267,7 @@ def tune():
         try:
             state.update(state="tuning", step="Fetching the graphics-card runner")
             if not runtime_cmd("gpu"):
-                _unzip(MANIFEST["runtime"]["gpu_url"], "runtime-gpu", "Downloading the graphics-card runner")
+                _unzip(MANIFEST["runtime"]["gpu_url"], "runtime-gpu", "Downloading the graphics-card runner", MANIFEST["runtime"].get("gpu_sha256", ""))
             state.update(state="tuning", step="Timing the processor")
             accel["cpu_s"] = _bench("cpu")
             state.update(state="tuning", step="Timing the graphics card")
@@ -244,20 +277,13 @@ def tune():
         except Exception as e:
             accel["note"] = str(e)[:200]
     settings["accel"] = accel
-    SETTINGS_FILE.write_text(json.dumps(settings))
+    save_settings()
 
 
 def _install_runtime():
-    # The pinned build is the one DexMentor was tested with and needs no API lookup (GitHub
-    # rate-limits lookups per office IP). The lookup is only a fallback if that file is gone.
-    zip_path = DATA / "runtime" / "runner.zip"
-    try:
-        _fetch(MANIFEST["runtime"]["url"], zip_path, "Downloading the model runner")
-    except (OSError, KeyError):
-        _fetch(_latest_runtime_url(), zip_path, "Downloading the model runner")
-    with zipfile.ZipFile(zip_path) as z:
-        z.extractall(DATA / "runtime")
-    zip_path.unlink()
+    # Only the pinned build DexMentor was tested with is ever downloaded and run.
+    rt = MANIFEST["runtime"]
+    _unzip(rt["url"], "runtime", "Downloading the model runner", rt.get("sha256", ""))
 
 
 def download():
@@ -269,7 +295,7 @@ def download():
         if not runtime_cmd():
             _install_runtime()
         if not model_path().exists():
-            _fetch(MANIFEST["model"]["url"], model_path(), "Downloading the language model")
+            _fetch(MANIFEST["model"]["url"], model_path(), "Downloading the language model", MANIFEST["model"].get("sha256", ""))
         if "accel" not in settings:
             tune()
         state["state"] = "ready"
@@ -296,13 +322,18 @@ def ensure_model():
         cmd = runtime_cmd()
         if not cmd or not model_path().exists():
             raise RuntimeError("The language model is not downloaded yet.")
+        if state["state"] == "tuning":
+            raise RuntimeError("DexMentor is still measuring this PC. Try again in a minute.")
+        if _healthy():  # a runner left over from an earlier session is already answering: use it
+            state.update(state="running", error="")
+            return
         state["state"] = "starting"
         mode = (settings.get("accel") or {}).get("mode", "cpu")
         proc = _start(mode)
         for _ in range(240):
             if proc.poll() is not None and mode == "gpu":  # graphics driver refused: use the processor from now on
                 settings["accel"]["mode"] = mode = "cpu"
-                SETTINGS_FILE.write_text(json.dumps(settings))
+                save_settings()
                 proc = _start(mode)
                 continue
             if proc.poll() is not None:
@@ -340,7 +371,8 @@ def idle_watch():
 
 
 # ---------- local web endpoint ----------
-HOP = {"host", "connection", "content-length", "transfer-encoding", "accept-encoding", "keep-alive"}
+HOP = {"host", "connection", "content-length", "transfer-encoding", "accept-encoding", "keep-alive", "origin", "referer"}
+MINE = ("127.0.0.1:%d" % PORT, "localhost:%d" % PORT)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -382,6 +414,11 @@ class Handler(BaseHTTPRequestHandler):
                 last_used = time.time()
         except (BrokenPipeError, ConnectionResetError):
             pass
+        except http.client.HTTPException:  # the far end died part-way through its reply
+            try:
+                self.wfile.write(b'\ndata: {"error": "The answer was cut off."}\n\n')
+            except OSError:
+                pass
         except OSError as e:
             try:
                 self._json({"error": "Could not reach %s (%s)" % (base, e)}, 502)
@@ -391,6 +428,13 @@ class Handler(BaseHTTPRequestHandler):
             conn.close()
 
     def handle_any(self):
+        # Only this PC's own DexMentor window may talk to the launcher: a web page open in a browser must not be
+        # able to repoint it, start downloads or read answers.
+        origin = self.headers.get("Origin")
+        if self.headers.get("Host") not in MINE or (origin and origin.split("://", 1)[-1] not in MINE):
+            return self._json({"error": "Not allowed."}, 403)
+        if self.path.startswith("/local/") and self.path != "/local/status" and self.command != "POST":
+            return self._json({"error": "Not allowed."}, 405)
         body = self._body()
         if self.path == "/local/status":
             refresh_state()
@@ -413,7 +457,7 @@ class Handler(BaseHTTPRequestHandler):
             if not url.startswith(("http://", "https://")):
                 return self._json({"error": "The address must start with http:// or https://"}, 400)
             settings["server_url"] = url
-            SETTINGS_FILE.write_text(json.dumps(settings))
+            save_settings()
             return self._json({"ok": True})
         if self.path.startswith("/llm/"):
             try:
@@ -423,7 +467,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._proxy("http://127.0.0.1:%d" % LLM_PORT, self.path[4:], body)
         return self._proxy(settings["server_url"], self.path, body)
 
-    do_GET = do_POST = handle_any
+    do_GET = do_POST = do_PUT = do_DELETE = handle_any
 
 
 def open_window(url):

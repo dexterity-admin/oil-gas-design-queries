@@ -23,7 +23,6 @@ def lan_address():
 
 def open_desk():
     """Opens the Library desk in its own window, using the Edge or Chrome already on the PC."""
-    time.sleep(2.5)
     url = "http://127.0.0.1:%d/#desk" % config.PORT
     for exe in (r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
                 r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
@@ -34,13 +33,31 @@ def open_desk():
     webbrowser.open(url)
 
 
+def already_running():
+    try:
+        with socket.create_connection(("127.0.0.1", config.PORT), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
 def main():
+    if already_running():  # started a second time (for example from the Start menu): just show the desk
+        if "--no-window" not in sys.argv:
+            open_desk()
+        return
     if config.FROZEN:  # a windowed program has no console: keep a log file next to the data instead
         config.DATA_DIR.mkdir(parents=True, exist_ok=True)
         sys.stdout = sys.stderr = open(config.DATA_DIR / "server.log", "a", buffering=1, encoding="utf-8")
+    if os.name == "nt":  # a sleeping server PC answers nobody: keep Windows awake while the Library runs
+        try:
+            import ctypes
+            ctypes.windll.kernel32.SetThreadExecutionState(0x80000001)
+        except Exception:
+            pass
     print("%s Library: http://%s:%d   documents: %s" % (config.APP_NAME, lan_address(), config.PORT, config.LIBRARY_DIR))
     if config.FROZEN and "--no-window" not in sys.argv:
-        threading.Thread(target=open_desk, daemon=True).start()
+        threading.Thread(target=lambda: (time.sleep(2.5), open_desk()), daemon=True).start()
     from .app import app
     uvicorn.run(app, host=config.HOST, port=config.PORT, log_config=None if config.FROZEN else uvicorn.config.LOGGING_CONFIG)
 

@@ -3,6 +3,7 @@ import json
 import re
 import sqlite3
 import threading
+import time
 
 import numpy as np
 
@@ -10,12 +11,13 @@ from . import config
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS documents(
-  id INTEGER PRIMARY KEY, relpath TEXT UNIQUE, name TEXT, kind TEXT,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, relpath TEXT UNIQUE, name TEXT, kind TEXT,
   stamp TEXT, pages INTEGER DEFAULT 0, note TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS chunks(
-  id INTEGER PRIMARY KEY, doc_id INTEGER, page INTEGER, loc TEXT, heading TEXT,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, doc_id INTEGER, page INTEGER, loc TEXT, heading TEXT,
   kind TEXT, text TEXT, rects TEXT, emb BLOB);
 CREATE INDEX IF NOT EXISTS chunks_doc ON chunks(doc_id);
+CREATE INDEX IF NOT EXISTS chunks_todo ON chunks(id) WHERE emb IS NULL;
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text, heading, tokenize='porter unicode61');
 """
 
@@ -69,11 +71,16 @@ def add_document(con, relpath, name, kind, stamp, pages, note, chunks):
 
 
 def stats():
+    """Counts are asked for by every open app every second or two: remember them briefly."""
+    cached = getattr(stats, "cache", None)
+    if cached and time.time() - cached[0] < 4:
+        return cached[1]
     with db() as con:
         d = con.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
         c = con.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
         e = con.execute("SELECT COUNT(*) FROM chunks WHERE emb IS NOT NULL").fetchone()[0]
-    return {"documents": d, "chunks": c, "embedded": e}
+    stats.cache = (time.time(), {"documents": d, "chunks": c, "embedded": e})
+    return stats.cache[1]
 
 
 def _fts_query(q):

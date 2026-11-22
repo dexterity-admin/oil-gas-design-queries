@@ -22,7 +22,6 @@ jobs:
           - {label: office-llama-3.1-8b, repo: bartowski/Meta-Llama-3.1-8B-Instruct-GGUF, suffix: "", mode: server, fold: "0"}
           - {label: office-qwen2.5-7b, repo: bartowski/Qwen2.5-7B-Instruct-GGUF, suffix: "", mode: server, fold: "0"}
           - {label: office-mistral-7b, repo: bartowski/Mistral-7B-Instruct-v0.3-GGUF, suffix: "", mode: server, fold: "1"}
-          - {label: office-navarasa-7b-tamil, repo: QuantFactory/Indic-gemma-7b-finetuned-sft-Navarasa-2.0-GGUF, suffix: "", mode: server, fold: "1"}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -130,7 +129,7 @@ jobs:
           du -sh dist/DexMentorLibrary | cut -f1
           ./dist/DexMentorLibrary/DexMentorLibrary.exe --no-window &
           for i in $(seq 60); do curl -sf http://127.0.0.1:8700/api/status > /dev/null && break; sleep 2; done
-          curl -s http://127.0.0.1:8700/api/status || { echo SERVER DID NOT START; cat dist/DexMentorLibrary/kb/server.log; exit 1; }
+          curl -s http://127.0.0.1:8700/api/status || { echo SERVER DID NOT START; cat "$LOCALAPPDATA/DexMentor Library/kb/server.log"; exit 1; }
           echo; curl -s http://127.0.0.1:8700/api/admin/check; echo
           for f in corpus/*; do curl -s -X PUT --data-binary "@$f" "http://127.0.0.1:8700/api/admin/files/$(basename "$f" | sed 's/ /%20/g')"; echo; done
           for i in $(seq 90); do S=$(curl -s http://127.0.0.1:8700/api/status); echo "$S" | grep -q '"documents":4' && echo "$S" | grep -q '"state":"idle"' && break; sleep 2; done
@@ -139,5 +138,5 @@ jobs:
           curl -s -X POST http://127.0.0.1:8700/api/chat -H "content-type: application/json" -d '{"messages":[{"role":"user","content":"What torque for M20 bolts on a 300# flange?"}]}' | head -c 900; echo
           curl -s -o page.png -w "page image: %{http_code} %{size_download} bytes\n" "http://127.0.0.1:8700/api/docs/1/page/1.png"
           curl -s -o index.html -w "ui: %{http_code} %{size_download} bytes\n" http://127.0.0.1:8700/
-          echo "--- server log"; tail -15 dist/DexMentorLibrary/kb/server.log
+          echo "--- server log"; tail -15 "$LOCALAPPDATA/DexMentor Library/kb/server.log"
           echo "$S" | grep -q '"documents":4' || exit 1

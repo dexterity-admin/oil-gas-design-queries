@@ -34,14 +34,15 @@
 
   <main>
     <nav id="side">
-      <button id="newBtn" class="cta">+ New enquiry</button>
-      <div class="cap">Logbook</div>
+      <button id="newBtn" class="cta">+ New question</button>
+      <div class="cap">Saved chats <button id="clearAll" title="Delete every saved chat on this PC">clear all</button></div>
       <div id="chatList"></div>
       <div id="modelCard" class="unit" hidden></div>
     </nav>
 
     <section id="chatCol">
-      <div id="thread"></div>
+      <div id="thread" role="log" aria-label="Questions and answers"></div>
+      <div id="sr" class="sr" role="status" aria-live="polite"></div>
       <form id="composer">
         <div id="gauge" title="How many earlier questions are carried into the next one" hidden></div>
         <div class="inputWrap">
@@ -87,9 +88,9 @@
     <div class="deskLeft">
       <div id="pinBar" class="unit" hidden>
         <b><i class="led"></i>Read-only here</b>Documents are added at the server PC. With the admin PIN you can add them from this PC too.
-        <div class="row"><input id="pinInput" type="password" placeholder="Admin PIN" autocomplete="off"><button id="pinBtn" class="ghost">Unlock</button></div>
+        <div class="row"><input id="pinInput" type="password" placeholder="Admin PIN" autocomplete="off"><button id="pinBtn" class="ghost">Unlock</button></div><div id="pinErr" class="err" role="alert"></div>
       </div>
-      <label id="drop" hidden>
+      <label id="drop" tabindex="0" hidden>
         <input id="fileInput" type="file" multiple accept=".pdf,.docx,.xlsx,.xlsm,.pptx" hidden>
         <svg viewBox="0 0 20 20"><path d="M10 13V3M6 7l4-4 4 4M3 13v3h14v-3"/></svg>
         <b>Add standards and design documents</b><span>Drop files here or click to browse · PDF, Word, Excel, PowerPoint</span>
@@ -99,6 +100,7 @@
       <div class="cap">Document register</div>
       <div id="register"></div>
       <div id="officeCard" class="unit" hidden></div>
+      <div id="adminCard" class="unit" hidden></div>
     </div>
     <div class="deskRight">
       <div class="cap">Inspection: what DexMentor read from the document</div>

@@ -4,13 +4,30 @@
 - Percent rules ("reduce by 25 percent"): the arithmetic is done by code and offered to the model.
 - Checking: every number in an answer must exist in the sources or in that arithmetic;
   anything else is reported so the app can flag it instead of showing it as fact.
-- Tanglish: the answer is produced in English first, then reworded; the numbers must survive.
+- Tanglish: the answer is produced in English first, then reworded; the values must survive.
+
+The guiding rule for the table matcher: when it is not sure, it says nothing. A missing hint costs
+a little accuracy; a wrong "this is the row" hint puts a wrong number in front of an engineer.
 """
 import re
 
 NUM = r"\d+(?:\.\d+)?"
-_UP = r"(?:up to|upto|below|under|less than|not more than|max(?:imum)?|<=?|≤)"
-_OVER = r"(?:above|over|more than|greater than|exceeding|>|≥)"
+_NUMBER = re.compile(r"(?<![\w.,])(?:-|minus\s+)?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?", re.I)
+_UNITS = {"in": "inch", "inches": "inch", '"': "inch", "nps": "inch", "°c": "c", "degc": "c", "deg": "c", "degrees": "c",
+          "degree": "c", "celsius": "c", "metre": "m", "metres": "m", "meter": "m", "meters": "m", "millimetre": "mm",
+          "millimetres": "mm", "millimeter": "mm", "millimeters": "mm", "hours": "h", "hour": "h", "hrs": "h", "hr": "h",
+          "lb": "#", "lbs": "#", "nb": "dn", "sch": "schedule", "microns": "micron", "µm": "micron"}
+_LE, _LT = r"(?:up\s*to|upto|≤|<=|=<|max(?:imum)?|not more than|not exceeding|to)", r"(?:<|below|under|less than|smaller than)"
+_GE, _GT = r"(?:≥|>=|=>|min(?:imum)?|not less than|at least|from)", r"(?:>|above|over|more than|greater than|exceeding|larger than)"
+
+
+def _num(text):
+    return float(re.sub(r"minus\s+", "-", text.lower()).replace(",", ""))
+
+
+def _unit(word):
+    w = word.lower().strip(".,;:()[]°") if word else ""
+    return _UNITS.get(w, w)
 
 
 def _rows(md):
@@ -25,88 +42,148 @@ def _rows(md):
 
 
 def _query_numbers(q):
-    """[(value, unit word after it)], nudged when the question says 'above 15' or 'below 15'."""
+    """[(value, {unit words next to it})]. "above 15" is nudged just over 15, "below 15" just under."""
     out = []
-    for m in re.finditer(r"(?:(%s|%s)\s+)?(%s)\s*([a-zA-Z#°%%]*)" % (_UP, _OVER, NUM), q, re.I):
-        v = float(m.group(2))
-        word = (m.group(1) or "").lower()
-        if word and re.fullmatch(_OVER, word):
+    for m in _NUMBER.finditer(q):
+        before = q[:m.start()].lower()
+        if re.search(r"[\d)]\s*$", before) and m.group(0).startswith("-"):
+            continue  # the dash of a range such as 50-100, not a minus sign
+        v = _num(m.group(0))
+        if re.search(_GT + r"\s*$", before):
             v += 1e-6
-        elif word in ("below", "under", "less than"):
+        elif re.search(_LT + r"\s*$", before):
             v -= 1e-6
-        out.append((v, m.group(3).lower().lstrip("°")))
+        nxt = re.match(r"\s*([a-zA-Z#°%\"µ]+)", q[m.end():])
+        prev = re.search(r"([a-zA-Z#]+)\s*$", before)
+        units = {_unit(nxt.group(1))} if nxt else set()
+        if prev:
+            units.add(_unit(prev.group(1)))
+        out.append((v, units - {""}))
     return out
 
 
-def _in_range(cell, v):
-    c = cell.lower().strip()
-    m = re.fullmatch(r"%s\s*(%s)" % (_UP, NUM), c)
+def _range(cell):
+    """A cell such as "Up to 15", "< 15", "≥ 15 mm", "3 to 8" or "10 and above" -> a test function, plus its unit."""
+    c = re.sub(r"\s+", " ", cell.lower().strip())
+    n = r"((?:-|minus )?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)"
+    tail = r"\s*([a-z°#%\"µ]*)$"
+    for pat, test in ((_LE, lambda v, a: v <= a), (_LT, lambda v, a: v < a), (_GE, lambda v, a: v >= a), (_GT, lambda v, a: v > a)):
+        m = re.fullmatch(pat + r"\s*" + n + tail, c)
+        if m:
+            a = _num(m.group(1))
+            return (lambda v, a=a, test=test: test(v, a)), _unit(m.group(2))
+    m = re.fullmatch(n + r"\s*(?:and above|and over|or more|and more|\+)" + tail, c)
     if m:
-        return v <= float(m.group(1))
-    m = re.fullmatch(r"%s\s*(%s)" % (_OVER, NUM), c)
+        a = _num(m.group(1))
+        return (lambda v, a=a: v >= a), _unit(m.group(2))
+    m = re.fullmatch(n + r"\s*(?:to|-|–|—)\s*" + n + tail, c)
     if m:
-        return v > float(m.group(1))
-    m = re.fullmatch(r"(%s)\s*(?:and above|and over|or more|\+)" % NUM, c)
-    if m:
-        return v >= float(m.group(1))
-    m = re.fullmatch(r"(%s)\s*(?:to|-|–)\s*(%s)" % (NUM, NUM), c)
-    if m:
-        return float(m.group(1)) <= v <= float(m.group(2))
-    return None
+        a, b = _num(m.group(1)), _num(m.group(2))
+        return (lambda v, a=a, b=b: a <= v <= b), _unit(m.group(3))
+    return None, ""
 
 
-def _units(label):
-    return set(re.findall(r"[a-z#%]+", label.lower()))
+def _label_units(label):
+    return {_unit(w) for w in re.findall(r"[a-zA-Z#°%\"µ]+", label)}
 
 
-def _score(cell, label, q, qtokens, qnums):
-    c = cell.lower().strip()
+def _tokens(text):
+    return re.findall(r"[a-z0-9#.]+(?:,\d{3})*", text.lower())
+
+
+def _is_key(col, cells):
+    """Columns a question selects a row BY (pipe size, bolt size, flange rating). Value columns
+    (the torque, a "Required"/"Not required" verdict, a description) never select a row."""
+    if col == 0:
+        return True
+    filled = [c for c in cells if c]
+    if not filled:
+        return False
+    coded = sum(1 for c in filled if _range(c)[0] or (re.search(r"\d", c) and re.search(r"[A-Za-z#]", c) and len(c) <= 14))
+    return coded >= 0.6 * len(filled)
+
+
+def _cell_match(cell, label, qtokens, qnums):
+    """2 if this key cell clearly matches the question, 0 if not, None if the question gives a value
+    of this column's kind that this cell does not cover."""
+    c = cell.strip()
     if not c:
         return 0
-    if len(c) > 3 and c in q:  # the question literally says "above 15"
-        return 3
-    if c in qtokens:
-        return 2
-    bound = [v for v, u in qnums if u and u in _units(label)]
-    for v in (bound or [v for v, u in qnums if not u or not bound]):
-        if _in_range(c, v):
+    test, cell_unit = _range(c)
+    units = _label_units(label) | ({cell_unit} if cell_unit else set())
+    bound = [v for v, us in qnums if us & units]  # a number may only be compared with a column of its own unit
+    if test:
+        if not bound:
+            return 0
+        return 2 if any(test(v) for v in bound) else None
+    if re.fullmatch(r"(?:-|minus )?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?", c.lower()):
+        if not bound:
+            return 0
+        return 2 if any(abs(v - _num(c)) < 1e-9 for v in bound) else None
+    want = _tokens(c)  # words and codes must match as whole tokens: "Class 150" is not "class 1500", "Water" is not "seawater"
+    for i in range(len(qtokens) - len(want) + 1):
+        if qtokens[i:i + len(want)] == want:
             return 2
+    shape = re.sub(r"\d", "9", c.lower())
+    if re.search(r"9", shape) and any(re.sub(r"\d", "9", t) == shape and t != c.lower() for t in qtokens):
+        return None  # the question names another item of this kind (M30 when the rows are M16, M20, M24)
     return 0
 
 
-def table_text(md, question):
-    """A table as labelled rows, with the row (and value) that fits the question put first."""
+def table_text(md, question, max_other=12):
+    """A table as labelled rows, with the row (and value) that fits the question put first.
+    Returns (text, numeric values of the matched row)."""
     rows = _rows(md)
     if len(rows) < 3 or not all(rows[0]) or len(set(rows[0])) != len(rows[0]):
         return md, []
     head, body = rows[0], rows[2:]
-    q = " " + question.lower() + " "
-    qtokens = set(re.findall(r"[a-z0-9#.]+", q))
-    qnums = _query_numbers(question)
+    qtokens, qnums = _tokens(question), _query_numbers(question)
+    keys = [i for i in range(len(head)) if _is_key(i, [r[i] for r in body])]
     line = lambda r: "; ".join("%s: %s" % (h, v) for h, v in zip(head, r) if v)
-    scores = [sum(_score(v, h, q, qtokens, qnums) for h, v in zip(head, r)) for r in body]
-    best = max(scores, default=0)
-    hits = [r for r, s in zip(body, scores) if s == best] if best >= 2 else []
-    values = []
-    out = []
-    if hits and len(hits) < len(body):
+    scored, uncovered = [], set()
+    for r in body:
+        results = [_cell_match(r[i], head[i], qtokens, qnums) for i in keys]
+        scored.append(None if None in results else sum(results))
+        uncovered |= {head[i] for i, res in zip(keys, results) if res is None}
+    best = max([s for s in scored if s is not None], default=0)
+    hits = [r for r, s in zip(body, scored) if s == best] if best >= 2 else []
+    # A column the question gives a value for, which no row covers, means the table does not answer it.
+    asked = {head[i] for i in keys for r in body if _cell_match(r[i], head[i], qtokens, qnums) in (2, None)}
+    out_of_range = [h for h in asked if not any(_cell_match(r[keys_i], h, qtokens, qnums) == 2
+                                                 for r in body for keys_i in [head.index(h)])]
+    values, out = [], []
+    if len(hits) == 1 and not out_of_range:
+        hit = hits[0]
         out.append("Row that matches the question:")
-        for r in hits:
-            out.append("- " + line(r))
-            values += [float(v) for v in r[1:] if re.fullmatch(NUM, v)]
-        if len(hits) == 1:  # column headers can be ranges too ("201 to 400 C (mm)")
-            cols = [(h, v) for h, v in zip(head[1:], hits[0][1:])
-                    if any(_in_range(re.sub(r"\s*[a-zA-Z°]*\s*\(.*\)\s*$", "", h).strip(), n) for n, u in qnums
-                           if u and u in _units(re.sub(r"\(.*\)", "", h)))]
-            if len(cols) == 1:  # show only the cell that answers the question, so no other value can be picked up
-                out[-1] = "- %s: %s; %s: %s" % (head[0], hits[0][0], cols[0][0], cols[0][1])
-                out.append("Value that answers the question: %s" % cols[0][1])
-                values = [float(cols[0][1])] if re.fullmatch(NUM, cols[0][1]) else values
+        out.append("- " + line(hit))
+        values = [_num(v) for i, v in enumerate(hit) if i not in keys and re.fullmatch(r"-?[\d,]+(?:\.\d+)?", v)]
+        cols = []  # value columns whose header is itself a range ("201 to 400 C (mm)")
+        for i, h in enumerate(head):
+            if i in keys:
+                continue
+            m = re.match(r"(.*?\d)\s*([a-zA-Z°]{1,3})?\s*(?:\(.*\))?\s*$", h)
+            test = _range(m.group(1))[0] if m else None
+            if test and m.group(2) and any(test(v) for v, us in qnums if _unit(m.group(2)) in us):
+                cols.append(i)
+        if len(cols) == 1:  # show only the cell that answers the question, so no neighbouring value can be picked up
+            i = cols[0]
+            out[-1] = "- " + "; ".join("%s: %s" % (head[k], hit[k]) for k in keys if hit[k]) + "; %s: %s" % (head[i], hit[i])
+            out.append("Value that answers the question: %s" % hit[i])
+            values = [_num(hit[i])] if re.fullmatch(r"-?[\d,]+(?:\.\d+)?", hit[i]) else values
+        others = [r for r in body if r is not hit]
         out.append("Other rows of the same table (do not use them for this question):")
-        out += ["- " + line(r) for r in body if r not in hits]
+        out += ["- " + line(r) for r in others[:max_other]]
+        if len(others) > max_other:
+            out.append("- (%d more rows not shown)" % (len(others) - max_other))
     else:
+        if out_of_range:
+            out.append("NOTE: no row of this table covers the %s asked about. This table does not answer the question."
+                       % " / ".join(out_of_range))
         out.append("Table, one row per line:")
-        out += ["- " + line(r) for r in body]
+        shown = body[:40]
+        out += ["- " + line(r) for r in shown]
+        if len(body) > len(shown):
+            out.append("- (%d more rows not shown)" % (len(body) - len(shown)))
     return "\n".join(out), values
 
 
@@ -135,14 +212,23 @@ _COMMON = set("""a an and are as at be been by can could do does did for from ha
 me my of on or our shall should that the their them then there these this those to us was we were what when where which
 who whom whose why will with would you your about above across after against all also any applies apply applied around
 before below between both but during each either every give given gives kind long many maximum minimum max min more most
-much must need needed needs no not often only other over per please required requires same show some such tell than through
-type under until up use used using value values very while within without smaller larger bigger ones one inch they them specification tamil english evlo venum irukkanum irukku ku la
-enna yenna epdi eppadi pannanum""".split())
-
-
+much must need needed needs no not often only other over per please required requires require same show some such tell
+than through type under until up use used using value values very while within without smaller larger bigger ones one
+inch they them specification explain explains say says said standard standards document documents spec recommend
+recommended correct right allowed permitted big small large high low best good proper properly exactly actually
+company according per case cases thing things way get make made take put kindly sir tamil english evlo venum
+irukkanum irukku irundha vekkanum ku la enna yenna epdi eppadi pannanum ethana""".split())
 _QUANTITY = set("""thickness pressure temperature span torque speed diameter length width height weight load stress
 velocity flow rating size grade clearance spacing distance slope allowance tolerance time depth capacity power voltage
 current frequency density viscosity hardness strength factor ratio""".split())
+
+
+def _stem(w):
+    for suf in ("ations", "ation", "ings", "ing", "ment", "ies", "ed", "es", "s"):
+        if w.endswith(suf) and len(w) - len(suf) >= 4:
+            w = w[:-len(suf)]
+            break
+    return w[:6]
 
 
 def missing_terms(question, chunk_texts):
@@ -151,8 +237,7 @@ def missing_terms(question, chunk_texts):
     "ring wall" and another says "insulation thickness"."""
     texts = [t.lower() for t in chunk_texts]
     raw = re.findall(r"[a-z][a-z-]{2,}", question.lower())
-    stem = lambda w: w[:5] if len(w) > 5 else w.rstrip("s")
-    seen = lambda w: {i for i, t in enumerate(texts) if stem(w) in t}
+    seen = lambda w: {i for i, t in enumerate(texts) if _stem(w) in t}
     out = [w for w in dict.fromkeys(raw) if w not in _COMMON and not seen(w)]
     for a, b in zip(raw, raw[1:]):  # words that are directly next to each other in the question
         if b in _QUANTITY and a not in _COMMON and a not in _QUANTITY and not seen(a) & seen(b) and a + " " + b not in out:
@@ -160,30 +245,51 @@ def missing_terms(question, chunk_texts):
     return out
 
 
+def not_covered(question, missing):
+    """True only when code can be confident the library does not cover the question: a refusal written
+    by code is a hard stop, so a doubtful case is left to the model instead."""
+    if any(" " in m for m in missing):
+        return True
+    content = {w for w in re.findall(r"[a-z][a-z-]{2,}", question.lower()) if w not in _COMMON}
+    return len(missing) >= 3 and len(missing) >= 0.6 * max(1, len(content))
+
+
 def tidy(answer):
     """Small models sometimes tack the refusal sentence onto a real answer; a real answer wins."""
     a = re.sub(r"\n+\s*(Source|Sources)\s*:\s*(?=\[)", " ", answer).strip()
-    stripped = re.sub(r"\s*The documents do not cover this( question)?( directly)?\.?\s*$", "", a, flags=re.I).strip()
-    return stripped if len(stripped) > 25 else a
+    stripped = re.sub(r"(?:(?<=[.!?\]])|^)\s*The documents do not cover this( question)?( directly)?\.?\s*$", "", a, flags=re.I).strip()
+    return stripped if len(stripped) > 25 and stripped[-1] in ".!?])" else a
+
+
+def _numbers(text):
+    """Numbers as written, sign and thousands separators understood: {-29.0, 1500.0, ...} with their decimals."""
+    out = []
+    for m in _NUMBER.finditer(text):
+        if m.group(0).startswith("-") and re.search(r"[\d)]\s*$", text[:m.start()]):
+            raw = m.group(0)[1:]
+        else:
+            raw = m.group(0)
+        clean = re.sub(r"minus\s+", "-", raw.lower()).replace(",", "")
+        out.append((float(clean), len(clean.split(".")[1]) if "." in clean else 0, raw))
+    return out
 
 
 def unverified_numbers(answer, source_text):
-    """Numbers in the answer that appear nowhere in the sources, the question or the arithmetic help."""
+    """Numbers in the answer that appear nowhere in the sources, the question or the arithmetic help.
+    This proves a number was not invented; it cannot prove it was taken from the right place."""
     body = re.sub(r"\[\d{1,2}(?:\s*,\s*\d{1,2})*\]", " ", answer)          # citations
     body = re.sub(r"(?m)^\s*\d+[.)]\s", " ", body)                           # list numbering
-    known = set(re.findall(NUM, source_text))
-    known_f = [float(k) for k in known]
+    known = [v for v, _, _ in _numbers(source_text)]
     # "reduce by 25 percent" legitimately brings 0.75 and 75 into a shown calculation.
     for pct in re.findall(r"(%s)\s*(?:percent|%%)" % NUM, source_text):
-        known_f += [float(pct) / 100, 1 - float(pct) / 100, 1 + float(pct) / 100, 100 - float(pct), 100 + float(pct)]
+        known += [float(pct) / 100, 1 - float(pct) / 100, 1 + float(pct) / 100, 100 - float(pct), 100 + float(pct)]
     bad = []
-    for n in re.findall(NUM, body):
-        f = float(n)
-        decimals = len(n.split(".")[1]) if "." in n else 0
-        if n in known or any(abs(round(k, decimals) - f) < 1e-9 for k in known_f):
-            continue
-        if n not in bad:
-            bad.append(n)
+    for v, decimals, raw in _numbers(body):
+        exact = any(abs(k - v) < 1e-9 for k in known)
+        # A value may be rounded for display (3.225 -> 3.23), but never rounded away to a whole number.
+        rounded = decimals >= 1 and any(abs(round(k, decimals) - v) < 1e-9 for k in known)
+        if not exact and not rounded and raw not in bad:
+            bad.append(raw)
     return bad
 
 
@@ -211,10 +317,29 @@ def tanglish_request(english):
     return {"system": TANGLISH_SYSTEM, "messages": msgs + [{"role": "user", "content": english}], "max_tokens": 500}
 
 
+def _value_units(text):
+    """{(value, unit word after it)}: "15 m ... 48 hours" must not come back as "48 m ... 15 hours"."""
+    text = re.sub(r"\[\d{1,2}(?:\s*,\s*\d{1,2})*\]", " ", text)
+    out = set()
+    for m in _NUMBER.finditer(text):
+        nxt = re.match(r"\s*([a-zA-Z#°%]+)", text[m.end():])
+        out.add((_num(m.group(0)) if not re.search(r"[\d)]\s*$", text[:m.start()]) else abs(_num(m.group(0))),
+                 _unit(nxt.group(1)) if nxt else ""))
+    return out
+
+
 def tanglish_ok(english, tanglish):
-    """The reworded answer must carry exactly the same numbers and citations, and actually be Tanglish."""
-    nums = lambda t: sorted(re.findall(NUM, t))
-    tamil = re.search(r"\b(ku|la|irukk\w*|venum|pannanum|kudukk?anum|illa|mela|keezha|indha|andha|dhaan|aagum)\b", tanglish, re.I)
-    # "illa" negates a sentence: reject it unless the English answer is itself a negative.
-    flipped = re.search(r"\billai?\b", tanglish, re.I) and not re.search(r"\b(not|no|never|without)\b", english, re.I)
-    return nums(english) == nums(tanglish) and bool(tamil) and len(tanglish) > 10 and not flipped
+    """The reworded answer must carry exactly the same values with the same units, keep its meaning, and be Tanglish."""
+    values = lambda t: {v for v, _ in _value_units(t)}
+    if values(english) != values(tanglish):
+        return False
+    # Units are kept in English in Tanglish, so each value must still sit next to its own unit.
+    en_units = {(v, u) for v, u in _value_units(english) if u in _UNITS.values() or len(u) <= 3}
+    ta = _value_units(tanglish)
+    if any(u and (v, u) not in ta and any(tv == v and tu in {eu for _, eu in en_units} - {u} for tv, tu in ta) for v, u in en_units):
+        return False
+    tamil = re.search(r"\b(ku|la|irukk\w*|venum|pannanum|kudukk?anum|illa|mela|keezha|indha|andha|dhaan|aagum|thaan)\b", tanglish, re.I)
+    # "illa" negates a sentence: reject it unless the English answer is itself a negative; and a "not" must not vanish.
+    neg_en = bool(re.search(r"\b(not|no|never|without|cannot)\b", english, re.I))
+    neg_ta = bool(re.search(r"\b(illai?|kudathu|koodathu|matt\w*|vendam)\b", tanglish, re.I))
+    return bool(tamil) and len(tanglish) > 10 and neg_en == neg_ta
