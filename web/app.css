@@ -229,3 +229,5 @@ details.meta[open] summary{margin-bottom:8px}details.meta .trace{text-transform:
 .byMark{height:11px;vertical-align:-1px;margin-right:4px}
 
 .unit .job{padding:6px 0 0}.unit .rm{color:var(--mute);padding:0 6px;width:auto;margin:0}.unit .rm:hover{color:var(--bad)}
+
+.unit .row button{width:auto;margin-top:0;white-space:nowrap}.unit .row{flex-wrap:wrap}.unit .row input{min-width:220px}
