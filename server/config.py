@@ -44,7 +44,15 @@ TOP_K = int(os.getenv("TOP_K", "6"))
 # sources: on an old CPU every extra 1000 characters adds seconds before the first word.
 LOCAL_TOP_K = int(os.getenv("LOCAL_TOP_K", "4"))
 LOCAL_SOURCE_CHARS = int(os.getenv("LOCAL_SOURCE_CHARS", "1400"))
+OCR = os.getenv("OCR", "auto").lower()  # auto | off: the built-in reader for scanned pages
 SUPPORTED = {".pdf", ".docx", ".xlsx", ".xlsm", ".pptx"}
+# Documents that ship with the program. They are copied into the Library the first time it starts,
+# so engineers get answers before the librarian has added anything.
+STARTER_DIR = Path(os.getenv("STARTER_DIR", Path(getattr(sys, "_MEIPASS", ROOT)) / "starter"))
+STARTER_SEEDED = []
+# The private starter pack (see pack.py): repository, read-only access key, and what was last downloaded.
+PACK_API = os.getenv("PACK_API", "https://api.github.com").rstrip("/")
+PACK_REPO, PACK_TOKEN, PACK_SHA, PACK_FILES = "", "", "", []
 
 
 # Choices made in the Library desk (office model address, admin PIN) are remembered here.
@@ -55,7 +63,8 @@ FOLDERS = []  # folders on the server PC or the office network that are read in 
 
 
 def load_saved():
-    global LLM_PROVIDER, OLLAMA_URL, OLLAMA_MODEL, ADMIN_PIN, FOLDERS
+    global LLM_PROVIDER, OLLAMA_URL, OLLAMA_MODEL, ADMIN_PIN, FOLDERS, STARTER_SEEDED
+    global PACK_REPO, PACK_TOKEN, PACK_SHA, PACK_FILES
     try:
         saved = json.loads(SETTINGS_FILE.read_text())
     except (OSError, ValueError):
@@ -65,6 +74,9 @@ def load_saved():
     OLLAMA_MODEL = saved.get("ollama_model", OLLAMA_MODEL)
     ADMIN_PIN = saved.get("admin_pin", ADMIN_PIN)
     FOLDERS = [f for f in saved.get("folders", []) if isinstance(f, str)]
+    STARTER_SEEDED = [f for f in saved.get("starter_seeded", []) if isinstance(f, str)]
+    PACK_REPO, PACK_TOKEN = str(saved.get("pack_repo", "")), str(saved.get("pack_token", ""))
+    PACK_SHA, PACK_FILES = str(saved.get("pack_sha", "")), [f for f in saved.get("pack_files", []) if isinstance(f, str)]
 
 
 def resolve(relpath):

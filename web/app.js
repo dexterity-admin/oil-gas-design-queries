@@ -469,7 +469,7 @@ async function openDesk() {
   $('desk').hidden = false;
   const c = await (await fetch('api/admin/check', { headers: adminHeaders() })).json();
   admin = c.admin; $('drop').hidden = !admin; $('pinBar').hidden = admin;
-  paintOffice(); paintFolders(); paintAdmin(c); poll();
+  paintOffice(); paintPack(); paintFolders(); paintAdmin(c); poll();
 }
 // Admin PIN and stopping the Library: the Library has no window of its own to close.
 function paintAdmin(c) {
@@ -530,15 +530,32 @@ $('fileInput').onchange = (e) => { sendFiles(e.target.files); e.target.value = '
 ['dragover', 'dragleave', 'drop'].forEach((t) => $('drop').addEventListener(t, (e) => { e.preventDefault(); $('drop').classList.toggle('over', t === 'dragover'); if (t === 'drop') sendFiles(e.dataTransfer.files); }));
 $('pinBtn').onclick = async () => { pin = $('pinInput').value; sessionStorage.setItem('pin', pin); await openDesk(); if (!admin) { pin = ''; $('pinInput').value = ''; $('pinErr').textContent = 'That PIN is not right.'; } else $('pinErr').textContent = ''; };
 async function paintOffice(o) {
-  o = o || await (await fetch('api/admin/office')).json(); const c = $('officeCard'); c.hidden = false;
+  o = o || await (await fetch('api/admin/office', { headers: adminHeaders() })).json(); const c = $('officeCard'); c.hidden = false;
   const state = !o.enabled ? 'Not connected' : !o.reachable ? 'Cannot reach that PC' : !o.model_present ? 'Reached, but the model is not installed there' : 'Connected';
   c.innerHTML = `<b><i class="led ${o.enabled && o.reachable && o.model_present ? 'ok' : o.enabled ? 'bad' : ''}"></i>Office model · ${state}</b>
     A larger model on the office PC (through Ollama) adds deeper answers, Simple English and Tanglish for everyone. Without it the app works in English.` +
-    (admin ? `<div class="row"><input id="offUrl" placeholder="http://gaming-pc:11434" value="${o.enabled ? esc(o.url) : ''}"><input id="offModel" placeholder="model name" value="${esc(o.model)}"></div>
+    (admin ? `<div class="row"><input id="offUrl" placeholder="http://gaming-pc:11434" value="${o.enabled ? esc(o.url) : ''}"><input id="offModel" placeholder="model name" value="${esc(o.model || '')}"></div>
       <div class="row"><button class="ghost" id="offSave">Connect and test</button>${o.enabled ? '<button class="ghost" id="offOff">Disconnect</button>' : ''}</div>` +
       (o.reachable && o.models.length ? `<div class="mono" style="margin-top:8px">Installed there: ${o.models.map(esc).join(', ')}</div>` : '') : '');
   const set = async (url) => { const r = await fetch('api/admin/office', { method: 'POST', headers: { 'Content-Type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ url, model: $('offModel').value.trim() }) }); paintOffice(await r.json()); refresh(); };
   if (admin) { $('offSave').onclick = () => set($('offUrl').value.trim() || 'http://127.0.0.1:11434'); if ($('offOff')) $('offOff').onclick = () => set(''); }
+}
+async function paintPack(p) {
+  p = p || await (await fetch('api/admin/pack', { headers: adminHeaders() })).json(); const c = $('packCard');
+  c.hidden = !(admin || p.connected); if (c.hidden) return;
+  const state = !p.connected ? 'Not connected' : p.error ? 'Needs attention' : `${p.documents} document${p.documents === 1 ? '' : 's'} on the shelf`;
+  c.innerHTML = `<b><i class="led ${p.connected && !p.error ? 'ok' : p.connected ? 'bad' : ''}"></i>Starter pack · ${state}</b>
+    The company's own reference documents, kept in a private GitHub repository. The Library downloads them by itself and picks up new ones you add there.` +
+    (p.error ? `<div class="err">${esc(p.error)}</div>` : '') +
+    (admin ? `<div class="row"><input id="packRepo" placeholder="owner/private-repository" value="${esc(p.repo || '')}"><input id="packKey" type="password" autocomplete="off" placeholder="${p.connected ? 'access key saved' : 'read-only access key'}"></div>
+      <div class="row"><button class="ghost" id="packSave">${p.connected ? 'Check for new documents' : 'Connect'}</button>${p.connected ? '<button class="ghost" id="packOff">Disconnect</button>' : ''}</div>` : '');
+  if (!admin) return;
+  const set = async (repo) => {
+    $('packSave').disabled = true; $('packSave').textContent = 'Working…';
+    const r = await fetch('api/admin/pack', { method: 'POST', headers: { 'Content-Type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ repo, token: $('packKey').value.trim() }) });
+    const j = await r.json(); paintPack(r.ok ? j : { connected: p.connected, documents: p.documents, repo, error: j.detail || 'That did not work.' }); poll();
+  };
+  $('packSave').onclick = () => set($('packRepo').value.trim() || ' '); if ($('packOff')) $('packOff').onclick = () => set('');
 }
 $('libBtn').onclick = openDesk;
 $('deskClose').onclick = () => { $('desk').hidden = true; };

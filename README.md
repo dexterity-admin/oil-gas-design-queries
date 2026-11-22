@@ -27,6 +27,9 @@ DexMentor answers engineers' questions from **your company's own standards, desi
 | --- | --- |
 | **Cited answers** | Each number in an answer carries a balloon. One click opens the original page with the passage highlighted. |
 | **Reads the table, not just the words** | Code finds the row and column that match the question and does percentage sums itself. The model only words the answer. |
+| **Reads real-world PDFs** | Tables drawn by Word, merged header cells, tables laid on their side and sizes written as fractions (1½", ¾") are all read and matched. "OD" finds "outside diameter" and the other way round. |
+| **Reads scanned documents** | A 14 MB reader built into the Library reads scanned pages on the CPU, about two seconds a page, with nothing extra to install. |
+| **Starter pack, kept private** | Keep the company's reference documents in a private GitHub repository. Connect the Library to it once (repository name and a read-only key) and it downloads, indexes and keeps them up to date. Nothing from the pack is in the public installer. |
 | **Says when it does not know** | If the library never mentions what is asked, DexMentor refuses and shows the closest passages instead of guessing. |
 | **Numbers are checked** | Every number in an answer is checked against the sources. Anything not found is flagged in red. |
 | **Private** | Documents, index and models stay on your own PCs. No cloud service is used. |
@@ -71,7 +74,7 @@ question ─► rewrite follow-ups ─► search (keywords + meaning)
 
 The matcher, the arithmetic, the coverage check and the number check are plain code with unit tests (`tests/`), not model behaviour. When the matcher is unsure it says nothing rather than point at a row.
 
-**Limits you should know.** The number check proves a value was not invented; it cannot prove it came from the right place, so the highlighted page still matters. Scores come from a small set of test documents, not your library. Scanned PDFs need Tesseract installed on the server PC. Old `.doc`, `.xls` and `.ppt` files are not read.
+**Limits you should know.** The number check proves a value was not invented; it cannot prove it came from the right place, so the highlighted page still matters. Scores come from a small set of test documents, not your library. Scanned pages are read by a small built-in reader (no extra install); it leaves out numbers it is unsure of, so always check dimensions from a scan against the page shown. Old `.doc`, `.xls` and `.ppt` files are not read.
 
 ## For developers
 

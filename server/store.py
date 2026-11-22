@@ -7,7 +7,7 @@ import time
 
 import numpy as np
 
-from . import config
+from . import config, grounding
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS documents(
@@ -66,7 +66,7 @@ def add_document(con, relpath, name, kind, stamp, pages, note, chunks):
             (doc_id, c["page"], c["loc"], c.get("heading", ""), c["kind"], c["text"],
              json.dumps(c.get("rects", []))))
         con.execute("INSERT INTO chunks_fts(rowid,text,heading) VALUES(?,?,?)",
-                    (cur.lastrowid, c["text"], c.get("heading", "")))
+                    (cur.lastrowid, grounding.expand(c["text"]), c.get("heading", "")))
     return doc_id
 
 
@@ -84,9 +84,10 @@ def stats():
 
 
 def _fts_query(q):
+    q = grounding.expand(q)  # "outside diameter" also finds the table that says "OD"
     words = re.findall(r"[A-Za-z0-9]+(?:[.\-/][A-Za-z0-9]+)*", q)
     keep = [w for w in words if w.lower() not in STOP and len(w) > 1] or words
-    return " OR ".join('"%s"' % w.replace('"', "") for w in keep[:24])
+    return " OR ".join('"%s"' % w.replace('"', "") for w in keep[:32])
 
 
 def keyword_search(q, limit=30):
@@ -134,8 +135,14 @@ def hybrid_search(q, qvec=None, k=None):
     for ranked in (keyword_search(q), vector_search(qvec)):
         for rank, cid in enumerate(ranked):
             fused[cid] = fused.get(cid, 0.0) + 1.0 / (60 + rank)
-    best = sorted(fused, key=fused.get, reverse=True)[:k]
-    return [c for c in (get_chunk(i) for i in best) if c]
+    best = sorted(fused, key=fused.get, reverse=True)[:k * 3]
+    found = [c for c in (get_chunk(i) for i in best) if c]
+    # A page that is mostly a drawing leaves only its caption. Such a scrap matches many questions and
+    # answers none, so it goes behind real passages unless the question asks for a figure by name.
+    if not re.search(r"\b(exhibit|figure|fig|drawing|sketch|diagram)\b", q, re.I):
+        scrap = lambda c: c["kind"] == "text" and len(c["text"]) < 160
+        found = [c for c in found if not scrap(c)] + [c for c in found if scrap(c)]
+    return found[:k]
 
 
 def get_chunk(chunk_id):

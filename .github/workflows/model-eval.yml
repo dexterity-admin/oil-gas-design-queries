@@ -116,7 +116,7 @@ jobs:
       - name: Build DexMentor Library
         run: >
           pyinstaller --noconfirm --onedir --noconsole --name DexMentorLibrary --icon desktop/dexmentor.ico
-          --paths . --collect-submodules server --add-data "web;web" --collect-all fastembed --collect-all onnxruntime --collect-all pymupdf
+          --paths . --collect-submodules server --add-data "web;web" --add-data "starter;starter" --collect-all fastembed --collect-all onnxruntime --collect-all rapidocr_onnxruntime --collect-all pymupdf
           --collect-all tokenizers --collect-submodules uvicorn --collect-submodules docx --collect-submodules pptx
           --collect-submodules openpyxl --collect-data docx --collect-data pptx --hidden-import anthropic
           desktop/library_entry.py

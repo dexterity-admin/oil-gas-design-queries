@@ -17,6 +17,7 @@ pdfs_to_process/
 dummy_pdfs_for_sqa_test/
 dummy_sqa_db/
 *.pdf
+!starter/*.pdf
 *.zip
 *.tmp
 

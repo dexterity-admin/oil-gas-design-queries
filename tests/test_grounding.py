@@ -129,3 +129,39 @@ if __name__ == "__main__":
             except AssertionError as e:
                 failed += 1; print("FAIL", name, "|", e)
     sys.exit(1 if failed else 0)
+
+
+SIDEWAYS = """| NPS | ½ | ¾ | 1 | 1 ½ | 2 | 3 | 4 | 6 | 8 | 10 | 12 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| NB/DN | 15 | 20 | 25 | 40 | 50 | 80 | 100 | 150 | 200 | 250 | 300 |
+| OD in mm | 21.3 | 26.7 | 33.4 | 48.3 | 60.3 | 88.9 | 114 | 168 | 219 | 273 | 324 |"""
+
+OD_TOL = """| Nominal Pipe Size NPS | Nominal Pipe Size DN | Carbon Steel ASTM A53M | Carbon Steel ASTM A106M |
+| --- | --- | --- | --- |
+| ⅛to 1 ½ | 6 to 40 | ±0.4 mm | ±0.4 mm |
+| Over 1½ to 4 | Over 40 to 100 | ±1% | ±0.8 mm |
+| Over 4 to 8 | Over 100 to 200 | ±1% | +1.6 / -0.8 mm |"""
+
+
+def test_table_on_its_side_and_fraction_sizes():
+    row = lambda q: g.table_text(SIDEWAYS, q)[0].splitlines()[1]
+    assert row("OD of NPS 4 pipe") == "- NPS: 4; NB/DN: 100; OD in mm: 114"
+    assert row("outside diameter for 1 1/2 inch pipe") == "- NPS: 1 ½; NB/DN: 40; OD in mm: 48.3"
+    assert row('OD of 3/4" pipe') == "- NPS: ¾; NB/DN: 20; OD in mm: 26.7"
+    assert row("which NPS is DN 80") == "- NPS: 3; NB/DN: 80; OD in mm: 88.9"
+    assert g.table_text(SIDEWAYS, "OD of NPS 24 pipe")[0].startswith("NOTE: no row")
+    assert g.table_text(SIDEWAYS, "what is OD")[0].startswith("Table, one row per line")
+
+
+def test_over_x_to_y_ranges():
+    row = lambda q: g.table_text(OD_TOL, q)[0].splitlines()[1]
+    assert "Over 4 to 8" in row("OD tolerance for NPS 6 pipe as per A106M")
+    assert "Over 1½ to 4" in row("OD tolerance for NPS 4 pipe")  # 4 belongs to "over 1½ to 4", not "over 4 to 8"
+    assert "⅛to 1 ½" in row("OD tolerance for 1 inch pipe")
+    assert g.table_text(OD_TOL, "OD tolerance for NPS 30 pipe")[0].startswith("NOTE: no row")
+
+
+def test_quantity_of_an_unknown_thing_is_not_covered():
+    q = "what is the design pressure of a pig launcher"
+    assert g.not_covered(q, ["pig", "launcher"])
+    assert not g.not_covered("what is the design pressure of the launcher", ["launcher"])
