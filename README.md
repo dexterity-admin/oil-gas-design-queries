@@ -52,6 +52,14 @@ DexMentor answers engineers' questions from **your company's own standards, desi
 
 Windows shows a "Windows protected your PC" notice for the installers because they are not code-signed: choose *More info*, then *Run anyway*. When Windows Firewall asks about DexMentor Library, allow it on private networks, or the engineers' PCs will not find it.
 
+### Starter pack (optional)
+
+Reference books and guides that must not be public can live in a **private** GitHub repository. The Library downloads and indexes them by itself.
+
+1. Put the documents in a private repository.
+2. On GitHub, create a fine-grained access token limited to that repository with **Contents: Read-only**.
+3. On the Library desk, open **Starter pack**, type `owner/repository`, paste the key and press **Connect**.
+
 ### Office model
 
 <a name="office-model"></a>English answers work on every PC with the small built-in model. For deeper answers, Simple English and Tanglish, run [Ollama](https://ollama.com) on one stronger PC and link it from the Library desk (*Office model*).
@@ -87,18 +95,21 @@ python -m server
 ```
 
 ```bash
-python tests/test_grounding.py
+python -m pytest -q tests
 ```
 
 | Path | What |
 | --- | --- |
-| `server/` | Library server: ingestion, search, grounding, chat pipeline, admin API |
+| `server/` | Library server: ingestion, scanned-page reader, search, grounding, chat pipeline, starter pack, admin API |
+| `starter/` | Company-owned documents placed here ship inside the Library installer |
 | `web/` | The interface served by the Library (engineer app and Library desk) |
 | `desktop/` | Engineer-PC launcher: model download, on-demand model, LAN discovery |
 | `installer/` | Inno Setup scripts for both Windows installers |
 | `eval/` | Question set and harness used to compare models on GitHub Actions |
 | `site/` | The landing page (GitHub Pages) |
 | `legacy/` | The original PySide6 prototype |
+
+**Project state, what is proven and what is not, and the next steps: [docs/HANDOVER.md](docs/HANDOVER.md).**
 
 Every push builds both installers, smoke-tests them on Windows and publishes a [release](https://github.com/dexterity-admin/oil-gas-design-queries/releases). The landing page is redeployed whenever `site/` changes on `master`.
 
