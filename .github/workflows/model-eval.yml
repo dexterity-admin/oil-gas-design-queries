@@ -16,11 +16,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {label: pc-qwen2.5-1.5b, repo: Qwen/Qwen2.5-1.5B-Instruct-GGUF, suffix: "", mode: local}
-          - {label: office-gemma-3-12b, repo: bartowski/google_gemma-3-12b-it-GGUF, suffix: "", mode: server}
-          - {label: office-qwen3-14b, repo: bartowski/Qwen_Qwen3-14B-GGUF, suffix: " /no_think", mode: server}
-          - {label: office-phi-4-14b, repo: bartowski/phi-4-GGUF, suffix: "", mode: server}
-          - {label: office-mistral-nemo-12b, repo: bartowski/Mistral-Nemo-Instruct-2407-GGUF, suffix: "", mode: server}
+          - {label: pc-qwen2.5-1.5b, repo: Qwen/Qwen2.5-1.5B-Instruct-GGUF, suffix: "", mode: local, fold: "0"}
+          - {label: office-gemma-2-9b, repo: bartowski/gemma-2-9b-it-GGUF, suffix: "", mode: server, fold: "1"}
+          - {label: office-qwen3-8b, repo: bartowski/Qwen_Qwen3-8B-GGUF, suffix: " /no_think", mode: server, fold: "0"}
+          - {label: office-llama-3.1-8b, repo: bartowski/Meta-Llama-3.1-8B-Instruct-GGUF, suffix: "", mode: server, fold: "0"}
+          - {label: office-qwen2.5-7b, repo: bartowski/Qwen2.5-7B-Instruct-GGUF, suffix: "", mode: server, fold: "0"}
+          - {label: office-mistral-7b, repo: bartowski/Mistral-7B-Instruct-v0.3-GGUF, suffix: "", mode: server, fold: "1"}
+          - {label: office-navarasa-7b-tamil, repo: QuantFactory/Indic-gemma-7b-finetuned-sft-Navarasa-2.0-GGUF, suffix: "", mode: server, fold: "1"}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -46,7 +48,7 @@ jobs:
           curl -L --fail -o model.gguf "https://huggingface.co/${{ matrix.repo }}/resolve/main/$FILE"
           ls -la model.gguf; nproc; free -m | head -2; grep -m1 "model name" /proc/cpuinfo
       - name: Evaluate
-        env: {LIBRARY_DIR: "${{ github.workspace }}/evallib", DATA_DIR: "${{ github.workspace }}/evalkb", EVAL_MODE: "${{ matrix.mode }}"}
+        env: {LIBRARY_DIR: "${{ github.workspace }}/evallib", DATA_DIR: "${{ github.workspace }}/evalkb", EVAL_MODE: "${{ matrix.mode }}", EVAL_FOLD_SYSTEM: "${{ matrix.fold }}"}
         run: |
           python eval/make_corpus.py evallib
           if [ -n "$LLAMA" ]; then
@@ -83,8 +85,10 @@ jobs:
         run: |
           python eval/make_corpus.py evallib
           python -m server > server.log 2>&1 &
-          ./dist/DexMentor.exe --no-window &
-          sleep 8
+          DEXMENTOR_SERVER=http://127.0.0.1:9 ./dist/DexMentor.exe --no-window &
+          sleep 10
+          echo "auto-connect (started with a dead address): $(curl -s http://127.0.0.1:8720/local/status | grep -o '"server_url": "[^"]*"')"
+          echo "discover: $(curl -s -X POST http://127.0.0.1:8720/local/discover)"
           curl -s -X POST http://127.0.0.1:8720/local/download
           for i in $(seq 240); do
             S=$(curl -s http://127.0.0.1:8720/local/status); echo "$S" | cut -c1-200

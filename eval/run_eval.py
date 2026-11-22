@@ -49,7 +49,10 @@ TESTS = [  # (name, messages, style, must match, must NOT match, kind)
 
 
 def llm(req, max_tokens):
-    body = json.dumps({"messages": [{"role": "system", "content": req["system"] + SUFFIX}] + req["messages"],
+    msgs = [{"role": "system", "content": req["system"] + SUFFIX}] + req["messages"]
+    if os.getenv("EVAL_FOLD_SYSTEM") == "1":  # some chat templates (Gemma 2, Mistral 7B) have no system role
+        msgs = [dict(req["messages"][0], content=req["system"] + "\n\n" + req["messages"][0]["content"])] + req["messages"][1:]
+    body = json.dumps({"messages": msgs,
                        "temperature": 0, "max_tokens": max_tokens, "stream": False}).encode()
     t = time.time()
     r = urllib.request.urlopen(urllib.request.Request(BASE + "/v1/chat/completions", body, {"Content-Type": "application/json"}), timeout=1500)

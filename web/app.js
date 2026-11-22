@@ -417,12 +417,21 @@ async function refresh() {
     return working;
   } catch {
     $('dot').className = 'led bad'; $('libText').textContent = 'offline';
-    if (local && !$('connectDlg').open) { $('serverUrl').value = local.server_url || ''; $('connectDlg').showModal(); }
+    if (local && !$('connectDlg').open) { $('serverUrl').value = local.server_url || ''; $('connectDlg').showModal(); findLibrary(); }
     return false;
   }
 }
 let status = null, pollTimer = null;
 async function poll() { clearTimeout(pollTimer); const working = await refresh(); pollTimer = setTimeout(poll, working || !$('desk').hidden ? 1500 : 20000); }
+// The engineer app looks for the Library on the office network by itself; typing an address is the fallback.
+async function findLibrary() {
+  $('connectMsg').textContent = 'Searching the office network for DexMentor Library…';
+  try {
+    const r = await (await fetch('local/discover', { method: 'POST' })).json();
+    if (r.connected) { $('connectMsg').textContent = 'Found it at ' + r.server_url + '. Connecting…'; return refresh(); }
+  } catch {}
+  $('connectMsg').textContent = 'No Library answered on this network. Check that the Library PC is on and the DexMentor Library program is running, or enter its address (it is shown at the top of the Library desk).';
+}
 $('connectBtn').onclick = async () => {
   const r = await fetch('local/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ server_url: $('serverUrl').value }) });
   if (!r.ok) { $('connectErr').textContent = (await r.json()).error; return; }
@@ -436,7 +445,19 @@ async function openDesk() {
   $('desk').hidden = false;
   const c = await (await fetch('api/admin/check', { headers: adminHeaders() })).json();
   admin = c.admin; $('drop').hidden = !admin; $('pinBar').hidden = admin;
-  paintOffice(); poll();
+  paintOffice(); paintFolders(); poll();
+}
+async function paintFolders(list) {
+  list = list || await (await fetch('api/admin/folders')).json(); const c = $('folderCard'); c.hidden = !admin && !list.length;
+  c.innerHTML = '<b><i class="led ' + (list.length ? (list.every((f) => f.reachable) ? 'ok' : 'bad') : '') + '"></i>Linked folders</b>' +
+    'Read a folder where it already is, such as a mapped network drive, including all its sub-folders. Files there are never copied, changed or deleted. New files are picked up every 30 minutes.' +
+    list.map((f) => `<div class="job${f.reachable ? '' : ' err'}"><span>${esc(f.path)}</span><span class="grow"></span><span>${f.reachable ? f.documents + ' documents' + (f.skipped ? ' · ' + f.skipped + ' old-format files skipped' : '') : 'cannot be reached right now (its documents are kept)'}</span>${admin ? `<button class="rm" data-p="${esc(f.path)}" title="Unlink this folder">✕</button>` : ''}</div>`).join('') +
+    (admin ? `<div class="row"><input id="folderPath" placeholder="Z:\\Standards   or   \\\\fileserver\\Standards"><button class="ghost" id="folderAdd">Link folder</button><button class="ghost" id="rescan">Re-scan now</button></div><div id="folderErr" class="err"></div>` : '');
+  if (!admin) return;
+  const call = async (url, path) => { const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ path }) }); const j = await r.json(); if (!r.ok) { $('folderErr').textContent = j.detail; return; } lib = null; paintFolders(j); poll(); setTimeout(() => paintFolders(), 4000); };
+  $('folderAdd').onclick = () => call('api/admin/folders', $('folderPath').value);
+  $('rescan').onclick = async () => { await fetch('api/reindex', { method: 'POST' }); poll(); setTimeout(() => paintFolders(), 4000); };
+  c.querySelectorAll('.rm').forEach((b) => { b.onclick = () => confirm(`Unlink "${b.dataset.p}"? Its documents leave the index; the files themselves are not touched.`) && call('api/admin/folders/unlink', b.dataset.p); });
 }
 function paintDesk() {
   const s = status, docs = lib?.docs || [];
@@ -446,7 +467,7 @@ function paintDesk() {
   if (s.index.state !== 'idle') prog += `<div class="pipe"><div class="st done"><i></i>Receive</div><div class="ln done"></div><div class="st ${s.index.state === 'indexing' ? 'now' : 'done'}"><i></i>Read</div><div class="ln ${s.index.state === 'indexing' ? 'now' : 'done'}"></div><div class="st ${s.index.state === 'embedding' ? 'now' : ''}"><i></i>Index</div><div class="ln"></div><div class="st"><i></i>Ready</div><span class="clock">${s.index.done}/${s.index.total}</span></div><div class="job"><span>${esc(s.index.current || 'building the meaning index')}</span></div>`;
   $('deskProgress').innerHTML = prog;
   $('register').innerHTML = docs.length ? `<table><thead><tr><th>No.</th><th>Document</th><th>Type</th><th>Pages</th><th>Passages</th><th>Tables</th><th></th></tr></thead><tbody>` +
-    docs.map((d, i) => `<tr data-id="${d.id}" class="${inspecting === d.id ? 'sel' : ''}"><td class="mono">${pad(i + 1)}</td><td class="nm">${esc(d.name)}${d.note ? `<small>${esc(d.note)}</small>` : ''}${log[d.name]?.error ? `<small>${esc(log[d.name].error)}</small>` : ''}</td><td class="mono">${esc(d.kind.toUpperCase())}</td><td class="mono">${d.pages}</td><td class="mono">${d.chunks}</td><td class="mono">${d.tables}</td><td>${admin ? '<button class="rm" title="Remove from the library">✕</button>' : ''}</td></tr>`).join('') + '</tbody></table>'
+    docs.map((d, i) => `<tr data-id="${d.id}" class="${inspecting === d.id ? 'sel' : ''}"><td class="mono">${pad(i + 1)}</td><td class="nm">${esc(d.name)}${d.folder ? `<small style="color:var(--mute)">${d.linked ? '⇄ ' : ''}${esc(d.folder)}</small>` : ''}${d.note ? `<small>${esc(d.note)}</small>` : ''}${log[d.name]?.error ? `<small>${esc(log[d.name].error)}</small>` : ''}</td><td class="mono">${esc(d.kind.toUpperCase())}</td><td class="mono">${d.pages}</td><td class="mono">${d.chunks}</td><td class="mono">${d.tables}</td><td>${admin && !d.linked ? '<button class="rm" title="Remove from the library">✕</button>' : ''}</td></tr>`).join('') + '</tbody></table>'
     : '<p class="hint">The library is empty. Add your standards, design bases and reference documents to begin.</p>';
   const failed = (s.index.errors || []).length; if (failed) $('deskProgress').innerHTML += `<div class="job err">${failed} file(s) could not be read: ${esc(s.index.errors.join('; '))}</div>`;
 }

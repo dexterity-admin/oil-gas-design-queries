@@ -94,6 +94,7 @@
         <svg viewBox="0 0 20 20"><path d="M10 13V3M6 7l4-4 4 4M3 13v3h14v-3"/></svg>
         <b>Add standards and design documents</b><span>Drop files here or click to browse · PDF, Word, Excel, PowerPoint</span>
       </label>
+      <div id="folderCard" class="unit" hidden></div>
       <div id="deskProgress"></div>
       <div class="cap">Document register</div>
       <div id="register"></div>
@@ -107,8 +108,8 @@
 </section>
 
 <dialog id="connectDlg">
-  <div class="cap">Connect to your office server</div>
-  <p>DexMentor could not reach the Library server. Enter its address (ask whoever set it up), for example <span class="mono">http://192.168.1.20:8700</span>.</p>
+  <div class="cap">Finding your office Library</div>
+  <p id="connectMsg">Searching the office network for DexMentor Library…</p>
   <div class="row"><input id="serverUrl" placeholder="http://server-pc:8700"><button id="connectBtn" class="cta">Connect</button></div>
   <div id="connectErr" class="err"></div>
 </dialog>

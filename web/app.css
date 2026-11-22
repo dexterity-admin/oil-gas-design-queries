@@ -227,3 +227,5 @@ details.meta[open] summary{margin-bottom:8px}details.meta .trace{text-transform:
 .chk.ok{color:var(--mute)}.chk.ok b{color:var(--ok)}
 .chk.bad{border-color:var(--bad);color:var(--ink);background:rgba(255,107,107,.08)}.chk.bad b{color:var(--bad)}
 .byMark{height:11px;vertical-align:-1px;margin-right:4px}
+
+.unit .job{padding:6px 0 0}.unit .rm{color:var(--mute);padding:0 6px;width:auto;margin:0}.unit .rm:hover{color:var(--bad)}

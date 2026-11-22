@@ -42,8 +42,11 @@ SUPPORTED = {".pdf", ".docx", ".xlsx", ".xlsm", ".pptx"}
 SETTINGS_FILE = DATA_DIR / "settings.json"
 
 
+FOLDERS = []  # folders on the server PC or the office network that are read in place (never copied or changed)
+
+
 def load_saved():
-    global LLM_PROVIDER, OLLAMA_URL, OLLAMA_MODEL, ADMIN_PIN
+    global LLM_PROVIDER, OLLAMA_URL, OLLAMA_MODEL, ADMIN_PIN, FOLDERS
     try:
         saved = json.loads(SETTINGS_FILE.read_text())
     except (OSError, ValueError):
@@ -52,6 +55,18 @@ def load_saved():
     OLLAMA_URL = saved.get("ollama_url", OLLAMA_URL)
     OLLAMA_MODEL = saved.get("ollama_model", OLLAMA_MODEL)
     ADMIN_PIN = saved.get("admin_pin", ADMIN_PIN)
+    FOLDERS = [f for f in saved.get("folders", []) if isinstance(f, str)]
+
+
+def resolve(relpath):
+    """A document's real path. Files dropped into the Library are stored by relative path,
+    files in linked folders by full path; anything outside those places is refused."""
+    p = Path(relpath)
+    if not p.is_absolute():
+        p = LIBRARY_DIR / relpath
+    p = Path(os.path.abspath(p))
+    roots = [LIBRARY_DIR] + [Path(os.path.abspath(f)) for f in FOLDERS]
+    return p if any(r == p or r in p.parents for r in roots) else None
 
 
 def save(**changes):

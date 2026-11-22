@@ -3,7 +3,9 @@
 Every chunk remembers exactly where it came from (page and rectangle, sheet and rows,
 slide, or heading) so the app can show the original and highlight it.
 """
+import os
 import re
+from pathlib import Path
 import shutil
 import threading
 import time
@@ -262,15 +264,39 @@ def sync():
     try:
         _again = False
         config.LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
+        wanted = lambda p: p.suffix.lower() in config.SUPPORTED and not p.name.startswith(("~$", "."))
         files = {str(p.relative_to(config.LIBRARY_DIR)): p for p in sorted(config.LIBRARY_DIR.rglob("*"))
-                 if p.is_file() and p.suffix.lower() in config.SUPPORTED and not p.name.startswith("~$")}
+                 if p.is_file() and wanted(p)}
+        offline, report = [], {}
+        for folder in config.FOLDERS:  # linked folders (for example a mapped network drive) are read where they are
+            root = os.path.abspath(folder)
+            info = report[folder] = {"reachable": os.path.isdir(root), "documents": 0, "skipped": 0}
+            if not info["reachable"]:
+                offline.append(root)
+                continue
+            for base, dirs, names in os.walk(root, onerror=lambda e: None):
+                dirs[:] = [d for d in dirs if not d.startswith((".", "$", "~"))]
+                for n in names:
+                    p = Path(base) / n
+                    if wanted(p):
+                        files[str(p)] = p
+                        info["documents"] += 1
+                    elif p.suffix.lower() in (".doc", ".xls", ".ppt", ".dwg", ".txt", ".rtf"):
+                        info["skipped"] += 1
+        status["folders"] = report
         with store.db() as con:
             known = {r["relpath"]: (r["id"], r["stamp"]) for r in con.execute("SELECT id,relpath,stamp FROM documents")}
             for rel in set(known) - set(files):
+                # A network drive that is switched off must not wipe its documents from the index.
+                if any(rel.startswith(o) for o in offline):
+                    continue
                 store.delete_document(con, known[rel][0])
         todo = []
         for rel, p in files.items():
-            st = p.stat()
+            try:
+                st = p.stat()
+            except OSError:
+                continue
             stamp = "%d-%d" % (st.st_size, int(st.st_mtime))
             if rel not in known or known[rel][1] != stamp:
                 todo.append((rel, p, stamp))
@@ -299,6 +325,14 @@ def sync():
         status.update(state="idle", current="", finished=time.time())
         _lock.release()
         if _again:
+            sync()
+
+
+def rescan_forever(minutes=30):
+    """New files saved to a linked folder are picked up without anyone pressing a button."""
+    while True:
+        time.sleep(minutes * 60)
+        if config.FOLDERS:
             sync()
 
 

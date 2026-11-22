@@ -1,6 +1,7 @@
 """HTTP API + static web UI. Run with:  python -m server"""
 import hmac
 import json
+import os
 import re
 from contextlib import asynccontextmanager
 
@@ -11,13 +12,17 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import chat, config, ingest, llm, store
+from . import chat, config, discovery, ingest, llm, store
 
 
 @asynccontextmanager
 async def lifespan(app):
+    import threading
+    from .__main__ import lan_address
     store.init()
     ingest.sync_in_background()
+    threading.Thread(target=ingest.rescan_forever, daemon=True).start()
+    discovery.serve(config.APP_NAME, lambda: "http://%s:%d" % (lan_address(), config.PORT))
     yield
 
 
@@ -44,7 +49,12 @@ def reindex():
 
 @app.get("/api/documents")
 def documents():
-    return store.list_documents()
+    docs = store.list_documents()
+    for d in docs:  # say where each document lives, without exposing full server paths to every user
+        rel = d.pop("relpath")
+        d["linked"] = os.path.isabs(rel)
+        d["folder"] = os.path.basename(os.path.dirname(rel)) if d["linked"] else os.path.dirname(rel)
+    return docs
 
 
 @app.post("/api/chat")
@@ -99,9 +109,9 @@ def _doc_path(doc_id):
     d = store.get_document(doc_id)
     if not d:
         raise HTTPException(404, "Document not found.")
-    path = (config.LIBRARY_DIR / d["relpath"]).resolve()
-    if not path.is_file() or config.LIBRARY_DIR not in path.parents:
-        raise HTTPException(404, "The original file is no longer in the library.")
+    path = config.resolve(d["relpath"])
+    if path is None or not path.is_file():
+        raise HTTPException(404, "The original file cannot be reached right now (is the network drive connected?).")
     return d, path
 
 
@@ -182,6 +192,9 @@ async def upload(name: str, request: Request):
 def remove(doc_id: int, request: Request):
     _admin(request)
     d, path = _doc_path(doc_id)
+    if config.LIBRARY_DIR not in path.parents:
+        raise HTTPException(400, "This document lives in a linked folder. DexMentor never deletes files there: "
+                                 "remove it in that folder, or unlink the folder.")
     path.unlink()
     with store.db() as con:
         store.delete_document(con, doc_id)
@@ -193,6 +206,39 @@ def remove(doc_id: int, request: Request):
 def passages(doc_id: int):
     """Everything that was read out of one document, so the librarian can check the reading is right."""
     return store.list_chunks(doc_id)
+
+
+class Folder(BaseModel):
+    path: str
+
+
+@app.get("/api/admin/folders")
+def folders():
+    seen = ingest.status.get("folders", {})
+    return [{"path": f, **seen.get(f, {"reachable": os.path.isdir(f), "documents": 0, "skipped": 0})} for f in config.FOLDERS]
+
+
+@app.post("/api/admin/folders")
+def folder_add(body: Folder, request: Request):
+    """Links a folder (with its sub-folders) that this PC can read, such as a mapped network drive."""
+    _admin(request)
+    path = body.path.strip().strip('"')
+    if not os.path.isabs(path) or not os.path.isdir(path):
+        raise HTTPException(400, "This PC cannot open that folder. Use the full path as this PC sees it, for example "
+                                 "Z:\\Standards or \\\\fileserver\\Standards.")
+    path = os.path.abspath(path)
+    if path not in config.FOLDERS:
+        config.save(folders=config.FOLDERS + [path])
+    ingest.sync_in_background()
+    return folders()
+
+
+@app.post("/api/admin/folders/unlink")
+def folder_remove(body: Folder, request: Request):
+    _admin(request)
+    config.save(folders=[f for f in config.FOLDERS if f != body.path])
+    ingest.sync_in_background()
+    return folders()
 
 
 class OfficeModel(BaseModel):

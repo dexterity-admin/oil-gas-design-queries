@@ -50,6 +50,64 @@ def load_settings():
         settings.update(json.loads(SETTINGS_FILE.read_text()))
 
 
+def server_ok(url=None):
+    try:
+        with urllib.request.urlopen((url or settings["server_url"]).rstrip("/") + "/api/status", timeout=3) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def discover(wait=2.0):
+    """Asks the office network "is a DexMentor Library running?" and returns the addresses that answer."""
+    import socket
+    found = []
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        s.settimeout(0.4)
+        targets = ["255.255.255.255", "127.0.0.1"]
+        try:  # also the broadcast address of this PC's own network, which some routers need
+            probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            probe.connect(("10.255.255.255", 1))
+            targets.append(probe.getsockname()[0].rsplit(".", 1)[0] + ".255")
+            probe.close()
+        except OSError:
+            pass
+        for t in targets:
+            try:
+                s.sendto(b"DEXMENTOR_DISCOVER_V1", (t, 8701))
+            except OSError:
+                pass
+        end = time.time() + wait
+        while time.time() < end:
+            try:
+                data, sender = s.recvfrom(600)
+                url = json.loads(data).get("url", "")
+                # The Library says where it thinks it is; the address the answer came from is tried too,
+                # which is what works when the Library PC has several network adapters.
+                for u in (url, "http://%s:%s" % (sender[0], url.rsplit(":", 1)[-1].strip("/"))):
+                    if u.startswith("http") and u not in found:
+                        found.append(u)
+            except (OSError, ValueError):
+                pass
+    finally:
+        s.close()
+    return found
+
+
+def auto_connect():
+    """Keeps the saved Library if it answers; otherwise finds one on the network and remembers it."""
+    if server_ok():
+        return True
+    for url in discover():
+        if server_ok(url):
+            settings["server_url"] = url
+            SETTINGS_FILE.write_text(json.dumps(settings))
+            return True
+    return False
+
+
 def model_path():
     return DATA / "models" / MANIFEST["model"]["file"]
 
@@ -337,6 +395,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/local/status":
             refresh_state()
             return self._json({**state, "server_url": settings["server_url"], "accel": settings.get("accel")})
+        if self.path == "/local/discover":
+            return self._json({"connected": auto_connect(), "server_url": settings["server_url"]})
         if self.path == "/local/download":
             threading.Thread(target=download, daemon=True).start()
             return self._json({"ok": True})
@@ -380,6 +440,7 @@ def open_window(url):
 def main():
     load_settings()
     refresh_state()
+    threading.Thread(target=auto_connect, daemon=True).start()
     threading.Thread(target=idle_watch, daemon=True).start()
     try:
         srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
