@@ -41,6 +41,9 @@ TESTS = [  # (name, messages, style, must match, must NOT match, kind)
     ("follow-up M24", [(U, "What torque should I use for M20 bolts on a 300# flange?"), ("assistant", A2), (U, "what about M24?")], "english", [r"\b370\b"], [r"\b540\b"], "followup"),
     ("tanglish span", [(U, "6 inch pipe ku maximum support span evlo?")], "tanglish", [r"5\.2", TAMIL], [r"5\.8", r"4\.3"], "tanglish"),
     ("tanglish torque", [(U, "M20 bolt 300# flange ku torque evlo venum?")], "tanglish", [r"\b215\b", TAMIL], [r"\b190\b"], "tanglish"),
+    ("tanglish settlement", [(U, "20 m diameter tank ku settlement points ethana venum?")], "tanglish", [r"\b16\b", TAMIL], [r"\b8\s+(settlement\s+)?points"], "tanglish"),
+    ("tanglish valve span", [(U, "4 inch pipe la valve irundha support span evlo vekkanum?")], "tanglish", [r"3\.2", TAMIL], [], "tanglish"),
+    ("tanglish DFT", [(U, "120 C ku keezha irukkura piping ku total dry film thickness evlo?")], "tanglish", [r"\b250\b", TAMIL], [r"\b200\b"], "tanglish"),
     ("tanglish water temp", [(U, "tank hydrotest ku water temperature minimum evlo irukkanum?")], "tanglish", [r"\b5\b", TAMIL], [], "tanglish"),
 ]
 
@@ -73,9 +76,9 @@ for name, msgs, style, musts, nots, kind in TESTS:
     elif prep.get("tanglish_step"):  # the office model rewords its English answer; code checks numbers and meaning
         ta, dt = llm(grounding.tanglish_request(body), 400); total += dt
         if grounding.tanglish_ok(body, ta):
-            note = " | english: " + body.replace("\n", " ")[:220]; body = ta
+            note = " | english: " + body.replace("\n", " ")[:400]; body = ta
         else:
-            note = " | TANGLISH REJECTED BY CHECK (english shown instead): " + ta.replace("\n", " ")[:220]
+            note = " | TANGLISH REJECTED BY CHECK (english shown instead): " + ta.replace("\n", " ")[:400]
     invented = chat.verify(body, prep.get("grounding", ""))["unverified"] if prep["sources"] else []
     wrong = [n for n in nots if re.search(n, body, re.I)]
     ok = all(re.search(m, body, re.I) for m in musts) and not wrong and not invented
