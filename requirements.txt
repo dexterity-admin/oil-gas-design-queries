@@ -9,3 +9,4 @@ httpx
 anthropic
 # Optional: semantic search on top of keyword search (downloads a ~130 MB model once)
 fastembed
+rapidocr-onnxruntime>=1.2.3,<1.5

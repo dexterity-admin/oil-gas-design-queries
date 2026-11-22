@@ -14,7 +14,7 @@ import traceback
 import numpy as np
 import pymupdf
 
-from . import config, grounding, pack, store
+from . import config, grounding, ocr, pack, store
 
 HEADING_RE = re.compile(r"^(\d+(\.\d+){0,4}|[A-Z]\.\d+(\.\d+)*|APPENDIX|ANNEX|SECTION|PART|TABLE|FIGURE)\b", re.I)
 
@@ -305,9 +305,9 @@ def _readable(text):
     return "\n".join(keep)
 
 
-def parse_pdf(path):
-    chunks, notes, heading = [], [], ""
-    ocr = bool(shutil.which("tesseract"))
+def parse_pdf(path, progress=None):
+    chunks, notes, heading, read_again = [], [], "", 0
+    builtin, tesseract = ocr.available(), bool(shutil.which("tesseract"))
     with pymupdf.open(path) as doc:
         pages = len(doc)
         try:  # the PDF's own bookmarks: [(first page, title)], used to name sections of scanned books
@@ -344,14 +344,32 @@ def parse_pdf(path):
             except Exception:
                 pass
             blocks = [b for b in page.get_text("blocks", sort=True) if b[6] == 0 and b[4].strip()]
-            if sum(len(b[4]) for b in blocks) < 40 and not table_boxes:
-                if ocr:
+            layer = "\n".join(b[4] for b in blocks)
+            empty = len(layer) < 40 and not table_boxes
+            # A scan's stored text is only as good as the scanner software that made it, and old ones garble
+            # numbers. Every scanned page is therefore read again by the built-in reader (OCR=missing: only
+            # pages that have no text at all).
+            poor = scanned and not empty and builtin and config.OCR != "missing"
+            if empty or poor:
+                fresh = []
+                if builtin:
+                    try:
+                        if progress:
+                            progress("reading scanned page %d of %d" % (pno, pages))
+                        fresh = [(r[0], r[1], r[2], r[3], t, 0, 0) for t, r, score in ocr.read_page(page)]
+                    except Exception:
+                        fresh = []
+                elif tesseract and empty:
                     try:
                         tp = page.get_textpage_ocr(dpi=200, full=True)
-                        blocks = [b for b in page.get_text("blocks", textpage=tp, sort=True) if b[4].strip()]
+                        fresh = [b for b in page.get_text("blocks", textpage=tp, sort=True) if b[4].strip()]
                     except Exception:
-                        blocks = []
-                if not blocks:
+                        fresh = []
+                if fresh:
+                    blocks, read_again = fresh, read_again + 1
+                    if not scanned:
+                        scanned, heading = True, ([t for p, t in toc if p <= pno] or [heading])[-1]
+                elif empty:
                     notes.append(pno)
                     chunks += tables
                     continue
@@ -386,9 +404,10 @@ def parse_pdf(path):
                 t.pop("box")
             chunks += packer.chunks + tables
     note = ""
+    if read_again:
+        note = "%d scanned page(s) read by the built-in reader: check numbers against the page" % read_again
     if notes:
-        note = "%d scanned page(s) had no readable text%s" % (
-            len(notes), "" if ocr else " (install Tesseract on the server to OCR them)")
+        note = (note + "; " if note else "") + "%d scanned page(s) had no readable text" % len(notes)
     return pages, chunks, note
 
 
@@ -561,7 +580,7 @@ def sync():
                 if p.suffix.lower() == ".pdf":
                     from .app import PDF_LOCK
                     with PDF_LOCK:
-                        pages, chunks, note = parse_pdf(p)
+                        pages, chunks, note = parse_pdf(p, lambda m, n=p.name: status.update(current=n + " · " + m))
                 else:
                     pages, chunks, note = PARSERS[p.suffix.lower()](p)
                 entry.update(pages=pages, passages=len(chunks), tables=sum(c["kind"] == "table" for c in chunks), note=note)
