@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import chat, config, discovery, ingest, llm, store
+from . import chat, config, discovery, ingest, llm, pack, store
 
 
 @asynccontextmanager
@@ -387,6 +387,35 @@ async def office_set(body: OfficeModel, request: Request):
                                  "passages are sent to it.")
     config.save(provider="ollama", ollama_url=body.url.rstrip("/"), ollama_model=body.model or config.OLLAMA_MODEL)
     return await office_get()
+
+
+class StarterPack(BaseModel):
+    repo: str = ""
+    token: str = ""
+
+
+@app.get("/api/admin/pack")
+def pack_get(request: Request):
+    return pack.status(full=_is_admin(request))
+
+
+@app.post("/api/admin/pack")
+def pack_set(body: StarterPack, request: Request):
+    """Connects the Library to the private repository that holds the company's starter documents."""
+    _admin(request)
+    if not body.repo:
+        pack.disconnect()
+    else:
+        repo = pack.clean_repo(body.repo)
+        if not repo:
+            raise HTTPException(400, "Type the repository as owner/name, for example dexterity-admin/dexmentor-starter-pack.")
+        token = body.token.strip() or (config.PACK_TOKEN if repo == config.PACK_REPO else "")
+        if not token:
+            raise HTTPException(400, "Paste the read-only access key for that repository.")
+        config.save(pack_repo=repo, pack_token=token, pack_sha="")
+        pack.fetch(force=True)
+    ingest.sync_in_background()
+    return pack.status(full=True)
 
 
 app.mount("/", StaticFiles(directory=config.WEB_DIR, html=True), name="web")

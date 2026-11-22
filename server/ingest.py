@@ -14,7 +14,7 @@ import traceback
 import numpy as np
 import pymupdf
 
-from . import config, grounding, store
+from . import config, grounding, pack, store
 
 HEADING_RE = re.compile(r"^(\d+(\.\d+){0,4}|[A-Z]\.\d+(\.\d+)*|APPENDIX|ANNEX|SECTION|PART|TABLE|FIGURE)\b", re.I)
 
@@ -472,6 +472,7 @@ def sync():
             _embedder = None  # it may have failed for lack of internet: try again this round
         config.LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
         seed_starter()
+        pack.fetch()
         wanted = lambda p: p.suffix.lower() in config.SUPPORTED and not p.name.startswith(("~$", "."))
         files = {str(p.relative_to(config.LIBRARY_DIR)): p for p in sorted(config.LIBRARY_DIR.rglob("*"))
                  if p.is_file() and wanted(p)}
@@ -565,7 +566,7 @@ def rescan_forever(minutes=30):
     """New files saved to a linked folder are picked up without anyone pressing a button."""
     while True:
         time.sleep(minutes * 60)
-        if config.FOLDERS:
+        if config.FOLDERS or config.PACK_REPO:
             sync()
 
 
