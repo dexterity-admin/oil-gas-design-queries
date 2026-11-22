@@ -97,6 +97,6 @@ python tests/test_grounding.py
 | `site/` | The landing page (GitHub Pages) |
 | `legacy/` | The original PySide6 prototype |
 
-Every push builds both installers, smoke-tests them on Windows and publishes a [release](https://github.com/dexterity-admin/oil-gas-design-queries/releases). The landing page is redeployed on every push.
+Every push builds both installers, smoke-tests them on Windows and publishes a [release](https://github.com/dexterity-admin/oil-gas-design-queries/releases). The landing page is redeployed whenever `site/` changes on `master`.
 
 <p align="center"><sub>Built by <b>Dexterity International</b> · Contractors &amp; Engineers F.Z.C</sub></p>
