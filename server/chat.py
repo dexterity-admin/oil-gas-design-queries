@@ -101,11 +101,11 @@ def needs_rewrite(question, prior, style):
     return bool(prior) or style == "tanglish" or bool(re.search(r"[^\x00-\x7F]", question))
 
 
-def answer_request(question, prior, chunks, style, template=None, query=""):
+def answer_request(question, prior, chunks, style, template=None, query="", said=None):
     system = (template or SYSTEM).format(app=config.APP_NAME, style=STYLES.get(style, STYLES["english"]), mark=FOLLOWUP_MARK)
     block = _source_block(chunks, question + " " + (query or ""))
     # Judge coverage on the English search query when there is one (the question may be Tanglish or a follow-up).
-    missing = _missing(query or question, chunks)
+    missing = _missing(query or question, chunks, said)
     note = ""
     if _not_covered(missing):
         note = ('\n\nNOTE: the SOURCES never mention these words from the question: %s. If the question depends on them, '
@@ -114,8 +114,14 @@ def answer_request(question, prior, chunks, style, template=None, query=""):
     return system, prior + [{"role": "user", "content": "SOURCES:\n\n%s%s\n\nQUESTION: %s" % (block, note, question)}], block
 
 
-def _missing(text, chunks):
-    return grounding.missing_terms(text, [c["heading"] + " " + c["name"] + " " + c["text"] for c in chunks])
+def _missing(text, chunks, said=None):
+    """said = the user's own words. A rewritten search query can contain words the rewriter added
+    ("installation", "calculation"); only words the user actually used may count as not covered."""
+    missing = grounding.missing_terms(text, [c["heading"] + " " + c["name"] + " " + c["text"] for c in chunks])
+    if said is None:
+        return missing
+    said = said.lower()
+    return [m for m in missing if all((w[:5] if len(w) > 5 else w.rstrip("s")) in said for w in m.split())]
 
 
 def _not_covered(missing):
@@ -147,7 +153,8 @@ def prepare(messages, style="english", query=None, stage=None, local=True, answe
         short_prior = short_prior[1:]
     # A small model will answer from a look-alike table even when warned, so here code decides:
     # if the library never mentions what is being asked about, say so and show the nearest passages.
-    missing = _missing(query, chunks) if local and chunks else []
+    said = " ".join([question] + [m["content"] for m in prior if m["role"] == "user"])
+    missing = _missing(query, chunks, said) if local and chunks else []
     if _not_covered(missing):
         return {"query": query, "sources": sources, "skip_model": True, "grounding": "",
                 "message": "The documents do not cover this: the library never mentions %s. The closest passages are "
@@ -155,7 +162,7 @@ def prepare(messages, style="english", query=None, stage=None, local=True, answe
     # On the PC the small model answers in English; Tanglish is a second, checked rewording step.
     two_step = local and style == "tanglish"
     system, msgs, block = answer_request(question, short_prior, chunks, "simple" if two_step else style,
-                                         LOCAL_SYSTEM if local else None, query)
+                                         LOCAL_SYSTEM if local else None, query, said)
     return {"query": query, "sources": sources, "system": system, "messages": msgs, "max_tokens": 700,
             "message": "" if chunks else NOT_FOUND, "tanglish_step": two_step,
             "grounding": block + "\n" + question}
@@ -219,7 +226,8 @@ async def answer(messages, style="english"):
         yield {"type": "done"}
         return
     # Code decides coverage for every model: none of them may answer from a look-alike table or from memory.
-    missing = _missing(query, chunks)
+    said = " ".join([question] + [m["content"] for m in prior if m["role"] == "user"])
+    missing = _missing(query, chunks, said)
     if _not_covered(missing):
         yield {"type": "delta", "text": "The documents do not cover this: the library never mentions %s. The closest "
                "passages are listed above so you can check them, or try other words." % ", ".join('"%s"' % m for m in missing[:4])}
@@ -229,7 +237,7 @@ async def answer(messages, style="english"):
     guarded = config.LLM_PROVIDER != "anthropic"
     two_step = guarded and style == "tanglish"
     system, final, block = answer_request(question, prior[-4:] if guarded else prior, chunks,
-                                          "simple" if two_step else style, LOCAL_SYSTEM if guarded else None, query)
+                                          "simple" if two_step else style, LOCAL_SYSTEM if guarded else None, query, said)
     text = ""
     try:
         async for piece in llm.stream(system, final):
