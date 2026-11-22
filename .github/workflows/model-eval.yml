@@ -1,0 +1,142 @@
+name: Model evaluation
+on:
+  push:
+    branches: ["claude/**"]
+    paths: ["eval/**", "desktop/**", "server/**", ".github/workflows/model-eval.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  eval:
+    # The model comparison takes hours: it runs only when a commit message contains [eval], or when started by hand.
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[eval]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {label: pc-qwen2.5-1.5b, repo: Qwen/Qwen2.5-1.5B-Instruct-GGUF, suffix: "", mode: local, fold: "0"}
+          - {label: office-gemma-2-9b, repo: bartowski/gemma-2-9b-it-GGUF, suffix: "", mode: server, fold: "1"}
+          - {label: office-qwen3-8b, repo: bartowski/Qwen_Qwen3-8B-GGUF, suffix: " /no_think", mode: server, fold: "0"}
+          - {label: office-llama-3.1-8b, repo: bartowski/Meta-Llama-3.1-8B-Instruct-GGUF, suffix: "", mode: server, fold: "0"}
+          - {label: office-qwen2.5-7b, repo: bartowski/Qwen2.5-7B-Instruct-GGUF, suffix: "", mode: server, fold: "0"}
+          - {label: office-mistral-7b, repo: bartowski/Mistral-7B-Instruct-v0.3-GGUF, suffix: "", mode: server, fold: "1"}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -q -r requirements.txt
+      - name: Get llama.cpp CPU build
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: |
+          mkdir rt && cd rt
+          gh release list -R ggml-org/llama.cpp -L 6 || true
+          TAG=$(gh release list -R ggml-org/llama.cpp -L 15 --json tagName -q '.[].tagName' | grep -E '^b[0-9]+' | head -1); echo "tag: $TAG"
+          [ -n "$TAG" ] && gh release view "$TAG" -R ggml-org/llama.cpp --json assets -q '.assets[].name' && gh release download "$TAG" -R ggml-org/llama.cpp -p '*bin-ubuntu-x64.*' || true
+          ls -la
+          for f in *.zip; do [ -f "$f" ] && unzip -q "$f"; done
+          for f in *.tar.gz; do [ -f "$f" ] && tar xzf "$f"; done
+          BIN=$(find . -name llama-server -type f | head -1); echo "found: $BIN"
+          if [ -n "$BIN" ]; then chmod +x "$BIN"; echo "LLAMA=$(realpath $BIN)" >> $GITHUB_ENV
+          else pip install -q "llama-cpp-python[server]"; fi
+      - name: Download model
+        run: |
+          FILE=$(curl -sL "https://huggingface.co/api/models/${{ matrix.repo }}" | python -c "import sys,json,re; f=[s['rfilename'] for s in json.load(sys.stdin)['siblings'] if re.search(r'q4_k_m\.gguf$', s['rfilename'], re.I)]; print(f[0])")
+          echo "model file: $FILE"
+          curl -L --fail -o model.gguf "https://huggingface.co/${{ matrix.repo }}/resolve/main/$FILE"
+          ls -la model.gguf; nproc; free -m | head -2; grep -m1 "model name" /proc/cpuinfo
+      - name: Evaluate
+        env: {LIBRARY_DIR: "${{ github.workspace }}/evallib", DATA_DIR: "${{ github.workspace }}/evalkb", EVAL_MODE: "${{ matrix.mode }}", EVAL_FOLD_SYSTEM: "${{ matrix.fold }}"}
+        run: |
+          python eval/make_corpus.py evallib
+          if [ -n "$LLAMA" ]; then
+            LD_LIBRARY_PATH=$(dirname $LLAMA) $LLAMA -m model.gguf -c 8192 --port 8719 -t $(nproc) > llama.log 2>&1 &
+          else
+            python -m llama_cpp.server --model model.gguf --n_ctx 8192 --port 8719 --n_threads $(nproc) > llama.log 2>&1 &
+          fi
+          for i in $(seq 120); do curl -sf http://127.0.0.1:8719/v1/models > /dev/null && break; sleep 1; done
+          echo "model RAM (MB): $(ps -eo rss,args | grep -E 'llama[-_](server|cpp)' | grep -v grep | sort -n | tail -1 | awk '{print int($1/1024)}')"
+          python eval/run_eval.py http://127.0.0.1:8719 "${{ matrix.label }}" "${{ matrix.suffix }}" || { tail -30 llama.log; exit 1; }
+          echo "RAM after run (MB): $(ps -eo rss,args | grep -E 'llama[-_](server|cpp)' | grep -v grep | sort -n | tail -1 | awk '{print int($1/1024)}')"
+
+  desktop:
+    name: Windows in-app download and load
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      LIBRARY_DIR: ${{ github.workspace }}\evallib
+      DATA_DIR: ${{ github.workspace }}\evalkb
+      DEXMENTOR_HOME: ${{ github.workspace }}\dmhome
+      DEXMENTOR_FORCE_GPU_TEST: "1"
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -q -r requirements.txt pyinstaller
+      - name: Build DexMentor.exe
+        run: pyinstaller --onefile --noconsole --name DexMentor --icon desktop/dexmentor.ico --add-data "desktop/models.json;." desktop/dexmentor.py
+      - uses: actions/upload-artifact@v4
+        with: {name: DexMentor-windows, path: dist/DexMentor.exe}
+      - name: Download, load and ask through the real launcher exe
+        shell: bash
+        run: |
+          python eval/make_corpus.py evallib
+          python -m server > server.log 2>&1 &
+          DEXMENTOR_SERVER=http://127.0.0.1:9 ./dist/DexMentor.exe --no-window &
+          sleep 10
+          echo "auto-connect (started with a dead address): $(curl -s http://127.0.0.1:8720/local/status | grep -o '"server_url": "[^"]*"')"
+          echo "discover: $(curl -s -X POST http://127.0.0.1:8720/local/discover)"
+          curl -s -X POST http://127.0.0.1:8720/local/download
+          for i in $(seq 240); do
+            S=$(curl -s http://127.0.0.1:8720/local/status); echo "$S" | cut -c1-200
+            echo "$S" | grep -q '"state": "ready"' && break
+            echo "$S" | grep -q '"error": "[^"]' && { echo DOWNLOAD FAILED; exit 1; }
+            sleep 5
+          done
+          find dmhome -maxdepth 3 | head -40
+          curl -s http://127.0.0.1:8720/api/status | cut -c1-300
+          python eval/run_eval.py http://127.0.0.1:8720/llm windows-default ""
+          curl -s http://127.0.0.1:8720/local/status
+          echo; tasklist //FI "IMAGENAME eq llama-server.exe" || true
+          echo "unload: $(curl -s -X POST http://127.0.0.1:8720/local/unload)"; sleep 3
+          echo "after unload: $(curl -s http://127.0.0.1:8720/local/status)"; tasklist //FI "IMAGENAME eq llama-server.exe" || true
+
+  library:
+    name: Windows Library program (server PC)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env: {PYTHONUTF8: "1"}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -q -r requirements.txt pyinstaller
+      - name: Build DexMentor Library
+        run: >
+          pyinstaller --noconfirm --onedir --noconsole --name DexMentorLibrary --icon desktop/dexmentor.ico
+          --paths . --collect-submodules server --add-data "web;web" --collect-all fastembed --collect-all onnxruntime --collect-all pymupdf
+          --collect-all tokenizers --collect-submodules uvicorn --collect-submodules docx --collect-submodules pptx
+          --collect-submodules openpyxl --collect-data docx --collect-data pptx --hidden-import anthropic
+          desktop/library_entry.py
+      - uses: actions/upload-artifact@v4
+        with: {name: DexMentorLibrary-windows, path: dist/DexMentorLibrary}
+      - name: Start it, add documents through the Library desk API, ask a question
+        shell: bash
+        run: |
+          python eval/make_corpus.py corpus
+          du -sh dist/DexMentorLibrary | cut -f1
+          ./dist/DexMentorLibrary/DexMentorLibrary.exe --no-window &
+          for i in $(seq 60); do curl -sf http://127.0.0.1:8700/api/status > /dev/null && break; sleep 2; done
+          curl -s http://127.0.0.1:8700/api/status || { echo SERVER DID NOT START; cat "$LOCALAPPDATA/DexMentor Library/kb/server.log"; exit 1; }
+          echo; curl -s http://127.0.0.1:8700/api/admin/check; echo
+          for f in corpus/*; do curl -s -X PUT --data-binary "@$f" "http://127.0.0.1:8700/api/admin/files/$(basename "$f" | sed 's/ /%20/g')"; echo; done
+          for i in $(seq 90); do S=$(curl -s http://127.0.0.1:8700/api/status); echo "$S" | grep -q '"documents":4' && echo "$S" | grep -q '"state":"idle"' && break; sleep 2; done
+          echo "$S"
+          curl -s http://127.0.0.1:8700/api/documents; echo
+          curl -s -X POST http://127.0.0.1:8700/api/chat -H "content-type: application/json" -d '{"messages":[{"role":"user","content":"What torque for M20 bolts on a 300# flange?"}]}' | head -c 900; echo
+          curl -s -o page.png -w "page image: %{http_code} %{size_download} bytes\n" "http://127.0.0.1:8700/api/docs/1/page/1.png"
+          curl -s -o index.html -w "ui: %{http_code} %{size_download} bytes\n" http://127.0.0.1:8700/
+          echo "--- server log"; tail -15 "$LOCALAPPDATA/DexMentor Library/kb/server.log"
+          echo "$S" | grep -q '"documents":4' || exit 1

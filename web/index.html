@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#071a1d">
+<link rel="icon" href="img/icon-48.png">
+<link rel="apple-touch-icon" href="img/icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<title>DexMentor</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <button id="menuBtn" class="tool" title="Logbook" aria-label="Logbook">
+      <svg viewBox="0 0 20 20"><path d="M3 5h14M3 10h14M3 15h9"/></svg>
+    </button>
+    <div class="brand">
+      <img class="mark" src="img/icon-192.png" alt="DexMentor">
+      <div><span id="appName">DexMentor</span><small id="byline"><img class="byMark" src="img/dexterity-mark.png" alt="">BY DEXTERITY INTERNATIONAL</small></div>
+    </div>
+    <button id="libBtn" class="readout" title="Library and server status">
+      <i id="dot" class="led"></i><span class="k">LIBRARY</span><span id="libText" class="v">connecting</span>
+    </button>
+    <span class="grow"></span>
+    <div id="style" class="seg" role="radiogroup" aria-label="Answer language">
+      <button data-v="english">English</button><button data-v="simple">Simple</button><button data-v="tanglish">Tanglish</button>
+    </div>
+    <button id="themeBtn" class="tool" title="Light or dark" aria-label="Theme">
+      <svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="6.5"/><path d="M10 3.5v13a6.5 6.5 0 000-13z" class="fill"/></svg>
+    </button>
+  </header>
+
+  <main>
+    <nav id="side">
+      <button id="newBtn" class="cta">+ New question</button>
+      <div class="cap">Saved chats <button id="clearAll" title="Delete every saved chat on this PC">clear all</button></div>
+      <div id="chatList"></div>
+      <div id="modelCard" class="unit" hidden></div>
+    </nav>
+
+    <section id="chatCol">
+      <div id="thread" role="log" aria-label="Questions and answers"></div>
+      <div id="sr" class="sr" role="status" aria-live="polite"></div>
+      <form id="composer">
+        <div id="gauge" title="How many earlier questions are carried into the next one" hidden></div>
+        <div class="inputWrap">
+          <textarea id="input" rows="1" placeholder="Ask about your standards and design documents…" autofocus></textarea>
+          <button type="button" id="mic" class="tool" title="Dictate" hidden>
+            <svg viewBox="0 0 20 20"><rect x="7.5" y="2.5" width="5" height="9" rx="2.5"/><path d="M4.5 9.5a5.5 5.5 0 0011 0M10 15v3"/></svg>
+          </button>
+          <button type="submit" id="send" title="Ask">
+            <svg viewBox="0 0 20 20"><path d="M3 10h13M11 4.5L16.5 10 11 15.5"/></svg>
+          </button>
+        </div>
+      </form>
+    </section>
+
+    <aside id="ref" hidden>
+      <div class="refBar">
+        <span class="cap">Source sheet</span><span class="grow"></span>
+        <button id="prevPg" class="tool" title="Previous page"><svg viewBox="0 0 20 20"><path d="M12.5 4.5L7 10l5.5 5.5"/></svg></button>
+        <span id="pgLabel" class="mono"></span>
+        <button id="nextPg" class="tool" title="Next page"><svg viewBox="0 0 20 20"><path d="M7.5 4.5L13 10l-5.5 5.5"/></svg></button>
+        <button id="zoomBtn" class="tool" title="Zoom"><svg viewBox="0 0 20 20"><circle cx="9" cy="9" r="5.5"/><path d="M13 13l4 4M6.5 9h5M9 6.5v5"/></svg></button>
+        <button id="refClose" class="tool" title="Close"><svg viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15"/></svg></button>
+      </div>
+      <div class="sheet">
+        <div id="refBody"></div>
+        <div class="titleBlock">
+          <div class="c wide"><span>Document</span><b id="refDoc"></b></div>
+          <div class="c"><span>Location</span><b id="refLoc"></b></div>
+          <div class="c wide"><span>Section</span><b id="refSec"></b></div>
+          <a id="openOrig" class="c stamp" target="_blank" rel="noopener"><span>Verify</span><b>Open original ↗</b></a>
+        </div>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<section id="desk" hidden>
+  <div class="deskBar">
+    <span class="cap">Library desk</span><span id="deskSummary" class="mono"></span><span class="grow"></span>
+    <button id="deskClose" class="tool" title="Close"><svg viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15"/></svg></button>
+  </div>
+  <div class="deskBody">
+    <div class="deskLeft">
+      <div id="pinBar" class="unit" hidden>
+        <b><i class="led"></i>Read-only here</b>Documents are added at the server PC. With the admin PIN you can add them from this PC too.
+        <div class="row"><input id="pinInput" type="password" placeholder="Admin PIN" autocomplete="off"><button id="pinBtn" class="ghost">Unlock</button></div><div id="pinErr" class="err" role="alert"></div>
+      </div>
+      <label id="drop" tabindex="0" hidden>
+        <input id="fileInput" type="file" multiple accept=".pdf,.docx,.xlsx,.xlsm,.pptx" hidden>
+        <svg viewBox="0 0 20 20"><path d="M10 13V3M6 7l4-4 4 4M3 13v3h14v-3"/></svg>
+        <b>Add standards and design documents</b><span>Drop files here or click to browse · PDF, Word, Excel, PowerPoint</span>
+      </label>
+      <div id="folderCard" class="unit" hidden></div>
+      <div id="deskProgress"></div>
+      <div class="cap">Document register</div>
+      <div id="register"></div>
+      <div id="officeCard" class="unit" hidden></div>
+      <div id="adminCard" class="unit" hidden></div>
+    </div>
+    <div class="deskRight">
+      <div class="cap">Inspection: what DexMentor read from the document</div>
+      <div id="inspect"><p class="hint">Select a document in the register to check its passages and tables. If a table looks wrong here, answers from it will be wrong too.</p></div>
+    </div>
+  </div>
+</section>
+
+<dialog id="connectDlg">
+  <div class="cap">Finding your office Library</div>
+  <p id="connectMsg">Searching the office network for DexMentor Library…</p>
+  <div class="row"><input id="serverUrl" placeholder="http://server-pc:8700"><button id="connectBtn" class="cta">Connect</button></div>
+  <div id="connectErr" class="err"></div>
+</dialog>
+<script src="app.js"></script>
+</body>
+</html>

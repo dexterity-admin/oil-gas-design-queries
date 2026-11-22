@@ -1,32 +1,11 @@
-# GUI Framework
-PySide6
-
-# PDF Parsing and Image Extraction (for Indexing Tool and potentially Q&A Tool if showing previews)
-PyMuPDF
-
-# OCR Interface (for Indexing Tool)
-pytesseract
-
-# Image Handling (Dependency for pytesseract, PyMuPDF, PySide6 Pixmaps)
-Pillow
-
-# Embedding Model Library
-sentence-transformers
-
-# Vector Database
-chromadb
-
-# Unique IDs (Used in Indexing)
-uuid
-
-# Core ML Libraries (Dependencies for sentence-transformers, needed for both tools)
-torch
-transformers
-
-# Local LLM Runner (for Q&A Tool - worker.py)
-# Use '[cpu]' extra for potentially better CPU compatibility if needed
-ctransformers[cpu]
-
-# Add any other direct dependencies your code might import, e.g.:
-# requests # (If needed by chromadb/huggingface_hub features you enable)
-# posthog # (Dependency for chromadb telemetry, often installed automatically)
+fastapi
+uvicorn
+pymupdf
+python-docx
+openpyxl
+python-pptx
+numpy
+httpx
+anthropic
+# Optional: semantic search on top of keyword search (downloads a ~130 MB model once)
+fastembed

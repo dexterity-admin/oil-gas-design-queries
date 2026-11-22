@@ -1,0 +1,131 @@
+"""Run with:  python -m pytest tests  (or: python tests/test_grounding.py)
+Each case is a wrong answer the matcher once produced, or must never produce."""
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from server import grounding as g
+
+
+def T(*rows):
+    head, *body = rows
+    return "\n".join(["| " + " | ".join(head) + " |", "|" + " --- |" * len(head)] + ["| " + " | ".join(r) + " |" for r in body])
+
+
+def match(table, q):
+    text, values = g.table_text(table, q)
+    lines = text.split("\n")
+    row = lines[1] if lines[0].startswith("Row that matches") else None
+    return row, values, text
+
+
+TANK = T(["Tank diameter (m)", "Hold time (h)", "Settlement points"], ["Up to 15", "24", "8"], ["Above 15", "48", "16"])
+BOLT = T(["Bolt size", "Flange rating", "Torque (Nm)", "Lubricant"], ["M16", "150#", "110", "Moly"], ["M20", "150#", "190", "Moly"],
+         ["M20", "300#", "215", "Moly"], ["M24", "300#", "370", "Moly"])
+SPAN = T(["Pipe size (inch)", "Maximum span (m)"], ["2", "3.0"], ["4", "4.3"], ["6", "5.2"], ["8", "5.8"])
+INSUL = T(["Pipe size (inch)", "Up to 200 C (mm)", "201 to 400 C (mm)"], ["Up to 2", "40", "60"], ["3 to 8", "50", "80"], ["10 and above", "60", "100"])
+
+
+def test_basic_rows():
+    assert "Above 15" in match(TANK, "hold time for a tank above 15 m diameter")[0]
+    assert "Above 15" in match(TANK, "For a 20 m diameter tank, how many settlement points")[0]
+    assert "Up to 15" in match(TANK, "10 m diameter tank hold time")[0]
+    assert "215" in match(BOLT, "What torque for M20 bolts on a 300# flange?")[0]
+    assert match(SPAN, "span for a 4 inch pipe with a valve")[1] == [4.3]
+    r = match(INSUL, "mineral wool thickness for a 6 inch pipe at 300 C")
+    assert "Value that answers the question: 80" in r[2] and r[1] == [80.0]
+    assert "Value that answers the question: 40" in match(INSUL, "thickness for a 2 inch pipe at 150 C")[2]
+
+
+def test_value_cells_never_select_a_row():      # audit C1
+    pwht = T(["Thickness (mm)", "PWHT"], ["Up to 19", "Not required"], ["Above 19", "Required"])
+    assert "Up to 19" in match(pwht, "Is PWHT required for 12 mm thickness?")[0]
+
+
+def test_whole_tokens_only():                    # audit C1
+    cls = T(["Flange class", "Torque (Nm)"], ["Class 150", "110"], ["Class 300", "215"], ["Class 600", "400"])
+    row, values, text = match(cls, "bolt torque for class 1500 flange")
+    assert row is None and values == []
+    svc = T(["Service", "Corrosion allowance (mm)"], ["Water", "1.5"], ["Crude oil", "3.0"])
+    assert match(svc, "corrosion allowance for seawater service")[0] is None
+
+
+def test_thousands_and_negative_numbers():       # audit C2
+    p = T(["Design pressure (kPa)", "Test pressure (kPa)"], ["Up to 1000", "1500"], ["1001 to 5000", "7500"])
+    assert "7500" in match(p, "test pressure for a design pressure of 3,000 kPa")[0]
+    mat = T(["Design temperature (C)", "Material"], ["Up to 0", "LTCS A333"], ["1 to 400", "CS A106"])
+    assert "LTCS" in match(mat, "pipe material at -20 C")[0]
+    assert "LTCS" in match(mat, "pipe material at minus 29 degrees C")[0]
+
+
+def test_strict_and_inclusive_operators():       # audit C3
+    t = T(["Tank diameter (m)", "Hold time (h)"], ["< 15", "24"], ["≥ 15", "48"])
+    assert "48" in match(t, "hold time for a 15 m diameter tank")[0]
+    assert "24" in match(t, "hold time for a 14.9 m diameter tank")[0]
+
+
+def test_units_must_bind():                      # audit C4
+    wt = T(["DN", "Sch 40 (mm)", "Sch 80 (mm)"], ["50", "3.91", "5.54"], ["80", "5.49", "7.62"], ["100", "6.02", "8.56"])
+    assert match(wt, "wall thickness of 2 inch schedule 80 pipe")[0] is None
+    assert match(INSUL, "insulation for a 50 mm pipe at 150 C")[0] is None
+
+
+def test_out_of_table_is_said():                 # audit H4
+    assert "no row of this table covers" in match(SPAN, "maximum span for 12 inch pipe")[2]
+    assert "no row of this table covers" in match(BOLT, "torque for M30 bolts on a 900# flange")[2]
+    assert match(BOLT, "torque for M30 bolts")[0] is None
+
+
+def test_long_tables_are_not_cut_mid_row():      # audit C5
+    big = T(["NPS (inch)", "STD wall (mm)"], *[[str(n), "%.2f" % (n / 3)] for n in range(1, 31)])
+    row, values, text = match(big, "wall thickness of 28 inch STD pipe")
+    assert "NPS (inch): 28" in row and values == [9.33]
+    assert text.count("\n") < 20 and "more rows not shown" in text
+
+
+def test_number_check():                         # audit H2, C6
+    src = "Hold 48 hours. Span 5.2 m. Pressure 1,500 kPa and 900 kPa. Minus 29 degrees C. Reduced by 25 percent. 4.3 reduced by 25 percent = 3.225"
+    ok = lambda a: g.unverified_numbers(a, src)
+    assert ok("The span is 5.2 m and the hold is 48 hours [1].") == []
+    assert ok("Use 1500 kPa.") == [] and ok("Use 1,500 kPa.") == []
+    assert ok("4.3 x 0.75 = 3.225 m, about 3.23 m.") == []
+    assert ok("The maximum span is 5") == ["5"]              # a cut-off "5.2" is not a checked value
+    assert ok("Use 1,900 kPa.") == ["1,900"]
+    assert ok("The span is 6 m.") == ["6"]
+    assert ok("Down to -29 C.") == [] and ok("Up to 29 C.") == ["29"]
+
+
+def test_coverage_gate():                        # audit H4
+    passages = ["5.3 HYDROSTATIC TESTING The tank shall be filled with fresh water and held for the hold time in the table.",
+                "Bolt size Flange rating Torque (Nm) M20 300# 215", "6.1 PIPE SUPPORT SPACING maximum span between supports",
+                "7.1 INSULATION THICKNESS mineral wool", "ring wall level tolerance"]
+    gate = lambda q: g.not_covered(q, g.missing_terms(q, passages))
+    for q in ["holding time for hydrotest of a 20 m tank", "recommended bolting torque for M20 on 300# flanges",
+              "Could you explain what our standard says about spacing of pipe supports?", "hydro test duration for big tanks"]:
+        assert not gate(q), q
+    for q in ["What is the design wind speed for flare stacks?", "minimum wall thickness for 6 inch schedule 40 pipe"]:
+        assert gate(q), q
+
+
+def test_tanglish_guard():                       # audit M8
+    en = "The hold time for a tank above 15 m diameter is 48 hours [1]."
+    assert g.tanglish_ok(en, "15 m diameter ku mela irukkura tank ku hold time 48 hours [1].")
+    assert g.tanglish_ok("Span is 3.225 meters [1]. Reduced by 25% [1].", "Span 3.225 meters thaan [1]. 25% reduce aagum [1][1].")
+    assert not g.tanglish_ok(en, "Tank ku hold time 48 hours illa [1], 15 m ku mela.")          # negation added
+    assert not g.tanglish_ok(en, "48 m diameter ku mela irukkura tank ku hold time 15 hours [1].")  # values swapped
+    assert not g.tanglish_ok(en, "Tank ku hold time 24 hours [1], 15 m ku mela.")                # value changed
+    assert not g.tanglish_ok("It shall not be less than 5 degrees C [1].", "5 degrees C la irukkanum [1].")  # "not" dropped
+
+
+def test_tidy():
+    assert g.tidy("The span is 5.2 meters for a 6 inch pipe [1].\n\nThe documents do not cover this.") == "The span is 5.2 meters for a 6 inch pipe [1]."
+    assert g.tidy("For titanium: The documents do not cover this.") == "For titanium: The documents do not cover this."
+
+
+if __name__ == "__main__":
+    failed = 0
+    for name, fn in list(globals().items()):
+        if name.startswith("test_"):
+            try:
+                fn(); print("ok  ", name)
+            except AssertionError as e:
+                failed += 1; print("FAIL", name, "|", e)
+    sys.exit(1 if failed else 0)
