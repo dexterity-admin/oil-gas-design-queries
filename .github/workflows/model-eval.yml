@@ -8,6 +8,8 @@ permissions:
   contents: read
 jobs:
   eval:
+    # The model comparison takes hours: it runs only when a commit message contains [eval], or when started by hand.
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[eval]')
     runs-on: ubuntu-latest
     timeout-minutes: 350
     strategy:
@@ -111,7 +113,7 @@ jobs:
       - name: Build DexMentor Library
         run: >
           pyinstaller --noconfirm --onedir --noconsole --name DexMentorLibrary --icon desktop/dexmentor.ico
-          --add-data "web;web" --collect-all fastembed --collect-all onnxruntime --collect-all pymupdf
+          --paths . --collect-submodules server --add-data "web;web" --collect-all fastembed --collect-all onnxruntime --collect-all pymupdf
           --collect-all tokenizers --collect-submodules uvicorn --collect-submodules docx --collect-submodules pptx
           --collect-submodules openpyxl --collect-data docx --collect-data pptx --hidden-import anthropic
           desktop/library_entry.py
