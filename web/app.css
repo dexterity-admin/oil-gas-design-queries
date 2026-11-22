@@ -162,13 +162,36 @@ th{font:700 11px/1.3 var(--display);letter-spacing:.1em;text-transform:uppercase
 
 dialog{border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);width:min(580px,92vw);max-height:80vh;padding:18px}
 dialog::backdrop{background:rgba(0,0,0,.55)}
-#libSummary{color:var(--mute);font-size:13px}
-#libList{max-height:46vh;overflow:auto;border-top:1px solid var(--line)}
-.doc{display:flex;justify-content:space-between;gap:10px;padding:7px 2px;border-bottom:1px solid var(--line);font-size:13.5px}
-.doc small{font:400 10.5px var(--mono);color:var(--mute);display:block;text-transform:uppercase}
-.dlgBtns{display:flex;justify-content:space-between;margin-top:14px}
+dialog p{color:var(--mute);font-size:13.5px}
+.row{display:flex;gap:8px;margin-top:10px}
+.row input,.unit input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px 10px;color:var(--ink);font:inherit;outline:none}
+.row input:focus,.unit input:focus{border-color:var(--amber)}
+.seg[hidden]{display:none}
+/* ---- library desk ---- */
+#desk{position:fixed;inset:0;z-index:8;background:var(--bg);display:flex;flex-direction:column;
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:28px 28px}
+#desk[hidden]{display:none}
+.deskBar{display:flex;align-items:center;gap:14px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+#deskSummary{color:var(--mute)}
+.deskBody{flex:1;display:flex;min-height:0}
+.deskLeft{flex:1.15;min-width:0;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
+.deskRight{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px;padding:16px;border-left:1px solid var(--line);background:var(--panel)}
+#inspect{flex:1;overflow-y:auto}.hint{color:var(--mute);font-size:13.5px;max-width:46ch}
+#drop{display:flex;flex-direction:column;align-items:center;gap:4px;padding:22px;border:1.5px dashed var(--mute);border-radius:8px;background:var(--panel);cursor:pointer;text-align:center}
+#drop[hidden]{display:none}#drop svg{width:26px;height:26px;color:var(--amber)}#drop span{font:400 11px var(--mono);color:var(--mute)}
+#drop.over{border-color:var(--amber);background:var(--amber-soft)}
+.job{display:flex;align-items:center;gap:10px;font:400 12px var(--mono);padding:4px 0}
+.job .bar{flex:1;margin:0}.job.done{color:var(--mute)}.job.err{color:var(--bad)}
+#register table{width:100%;font-size:12.5px}#register td,#register th{border-left:0;border-right:0}
+#register tr.sel td{background:var(--amber-soft)}#register tbody tr{cursor:pointer}#register tbody tr:hover td{background:var(--raise)}
+#register td.nm{font:600 13px var(--body);color:var(--ink)}#register td small{display:block;font:400 10.5px var(--mono);color:var(--amber)}
+#register .rm{color:var(--mute);padding:2px 8px}#register .rm:hover{color:var(--bad)}
+.psg{border:1px solid var(--line);border-left:3px solid var(--line);background:var(--raise);padding:8px 12px;margin-bottom:8px;font-size:13px}
+.psg.table{border-left-color:var(--amber)}.psg .cap{display:flex;gap:10px;margin-bottom:6px}.psg .cap b{color:var(--amber)}
+.psg p{margin:.3em 0}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 @media (max-width:860px){
+  .deskBody{flex-direction:column;overflow-y:auto}.deskLeft,.deskRight{flex:none;overflow:visible}.deskRight{border-left:0;border-top:1px solid var(--line)}
   #side{position:fixed;top:0;bottom:0;left:0;z-index:6;width:84vw;max-width:320px;box-shadow:10px 0 40px rgba(0,0,0,.5)}
   #ref{position:fixed;inset:0;width:auto;max-width:none;min-width:0;z-index:5;border:0}
   .brand div,.readout .k{display:none}.seg button{padding:7px 8px;font-size:12px}

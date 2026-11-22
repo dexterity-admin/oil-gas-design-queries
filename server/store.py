@@ -153,6 +153,13 @@ def get_document(doc_id):
 def list_documents():
     with db() as con:
         rows = con.execute(
-            "SELECT d.id,d.name,d.kind,d.pages,d.note,COUNT(c.id) AS chunks FROM documents d "
+            "SELECT d.id,d.name,d.kind,d.pages,d.note,COUNT(c.id) AS chunks,"
+            "COALESCE(SUM(c.kind='table'),0) AS tables FROM documents d "
             "LEFT JOIN chunks c ON c.doc_id=d.id GROUP BY d.id ORDER BY d.name").fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_chunks(doc_id):
+    with db() as con:
+        rows = con.execute("SELECT id,page,loc,heading,kind,text FROM chunks WHERE doc_id=? ORDER BY page,id", (doc_id,)).fetchall()
     return [dict(r) for r in rows]

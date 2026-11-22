@@ -16,7 +16,8 @@ from . import config, store
 
 HEADING_RE = re.compile(r"^(\d+(\.\d+){0,4}|[A-Z]\.\d+(\.\d+)*|APPENDIX|ANNEX|SECTION|PART|TABLE|FIGURE)\b", re.I)
 
-status = {"state": "idle", "current": "", "done": 0, "total": 0, "errors": [], "embeddings": "off"}
+status = {"state": "idle", "current": "", "done": 0, "total": 0, "errors": [], "embeddings": "off", "log": []}
+_again = False  # a file arrived while indexing was running: go round once more
 _lock = threading.Lock()
 _embedder = None
 
@@ -29,7 +30,7 @@ def embedder():
     if _embedder is None:
         try:
             from fastembed import TextEmbedding
-            _embedder = TextEmbedding(config.EMBED_MODEL)
+            _embedder = TextEmbedding(config.EMBED_MODEL, cache_dir=str(config.DATA_DIR / "models"))
             status["embeddings"] = "on"
         except Exception as e:  # no internet / not installed: keyword search still works
             _embedder = False
@@ -82,6 +83,8 @@ def _md_table(rows):
         return ""
     width = max(len(r) for r in rows)
     rows = [r + [""] * (width - len(r)) for r in rows]
+    keep = [i for i in range(width) if any(r[i] for r in rows)]  # drop empty spacer columns
+    rows, width = [[r[i] for i in keep] for r in rows], len(keep)
     out = ["| " + " | ".join(rows[0]) + " |", "|" + " --- |" * width]
     out += ["| " + " | ".join(r) + " |" for r in rows[1:]]
     return "\n".join(out)
@@ -252,9 +255,12 @@ PARSERS = {".pdf": parse_pdf, ".docx": parse_docx, ".xlsx": parse_xlsx, ".xlsm":
 # ---------- sync the library folder with the index ----------
 def sync():
     """Index new and changed files, drop deleted ones. Safe to call any time."""
+    global _again
     if not _lock.acquire(blocking=False):
+        _again = True
         return
     try:
+        _again = False
         config.LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
         files = {str(p.relative_to(config.LIBRARY_DIR)): p for p in sorted(config.LIBRARY_DIR.rglob("*"))
                  if p.is_file() and p.suffix.lower() in config.SUPPORTED and not p.name.startswith("~$")}
@@ -271,15 +277,20 @@ def sync():
         status.update(state="indexing", done=0, total=len(todo), errors=[])
         for rel, p, stamp in todo:
             status["current"] = p.name
+            t0, entry = time.time(), {"name": p.name}
             try:
                 pages, chunks, note = PARSERS[p.suffix.lower()](p)
+                entry.update(pages=pages, passages=len(chunks), tables=sum(c["kind"] == "table" for c in chunks), note=note)
                 with store.db() as con:
                     if rel in known:
                         store.delete_document(con, known[rel][0])
                     store.add_document(con, rel, p.name, p.suffix.lower().lstrip("."), stamp, pages, note, chunks)
             except Exception as e:
                 status["errors"].append("%s: %s" % (p.name, e))
+                entry["error"] = str(e)[:200]
                 traceback.print_exc()
+            entry["seconds"] = round(time.time() - t0, 1)
+            status["log"] = ([entry] + status["log"])[:40]
             status["done"] += 1
         store.invalidate_vectors()
         status.update(state="embedding", current="")
@@ -287,6 +298,8 @@ def sync():
     finally:
         status.update(state="idle", current="", finished=time.time())
         _lock.release()
+        if _again:
+            sync()
 
 
 def sync_in_background():

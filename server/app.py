@@ -1,9 +1,12 @@
 """HTTP API + static web UI. Run with:  python -m server"""
+import hmac
 import json
+import re
 from contextlib import asynccontextmanager
 
+import httpx
 import pymupdf
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -28,7 +31,9 @@ class ChatRequest(BaseModel):
 
 @app.get("/api/status")
 def status():
-    return {"app": config.APP_NAME, "llm": llm.describe(), "llm_available": llm.available(), "index": ingest.status, **store.stats()}
+    from .__main__ import lan_address
+    return {"app": config.APP_NAME, "llm": llm.describe(), "llm_available": llm.available(), "index": ingest.status,
+            "address": "http://%s:%d" % (lan_address(), config.PORT), **store.stats()}
 
 
 @app.post("/api/reindex")
@@ -130,6 +135,99 @@ def page_image(doc_id: int, page: int, chunk: int = 0):
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_bytes(png)
     return Response(cache.read_bytes(), media_type="image/png", headers={"Cache-Control": "max-age=86400"})
+
+
+# ---------- Library desk: the librarian's side of the app ----------
+def _is_admin(request: Request):
+    if config.ADMIN_PIN:
+        return hmac.compare_digest(request.headers.get("x-admin-pin", ""), config.ADMIN_PIN)
+    # No PIN set: only the server PC itself may change the library (not a visitor arriving through a proxy or tunnel).
+    forwarded = request.headers.get("x-forwarded-for") or request.headers.get("cf-connecting-ip")
+    return request.client.host in ("127.0.0.1", "::1") and not forwarded
+
+
+def _admin(request: Request):
+    if not _is_admin(request):
+        raise HTTPException(401, "Changing the library needs the admin PIN, or must be done on the server PC.")
+
+
+@app.get("/api/admin/check")
+def admin_check(request: Request):
+    return {"admin": _is_admin(request), "pin_set": bool(config.ADMIN_PIN)}
+
+
+@app.put("/api/admin/files/{name}")
+async def upload(name: str, request: Request):
+    """Receives one document into the library folder and starts indexing it."""
+    _admin(request)
+    name = re.sub(r'[\\/:*?"<>|]', "_", name).strip(". ")
+    if not name or "." + name.rsplit(".", 1)[-1].lower() not in config.SUPPORTED:
+        raise HTTPException(400, "Only PDF, Word (.docx), Excel (.xlsx) and PowerPoint (.pptx) files can be added.")
+    config.LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
+    part = config.LIBRARY_DIR / (name + ".uploading")
+    size = 0
+    with open(part, "wb") as f:
+        async for block in request.stream():
+            size += len(block)
+            if size > 500 * 1024 * 1024:
+                f.close(); part.unlink(missing_ok=True)
+                raise HTTPException(413, "The file is larger than 500 MB.")
+            f.write(block)
+    part.replace(config.LIBRARY_DIR / name)
+    ingest.sync_in_background()
+    return {"ok": True, "name": name, "bytes": size}
+
+
+@app.delete("/api/admin/docs/{doc_id}")
+def remove(doc_id: int, request: Request):
+    _admin(request)
+    d, path = _doc_path(doc_id)
+    path.unlink()
+    with store.db() as con:
+        store.delete_document(con, doc_id)
+    store.invalidate_vectors()
+    return {"ok": True}
+
+
+@app.get("/api/admin/docs/{doc_id}/passages")
+def passages(doc_id: int):
+    """Everything that was read out of one document, so the librarian can check the reading is right."""
+    return store.list_chunks(doc_id)
+
+
+class OfficeModel(BaseModel):
+    url: str = ""
+    model: str = ""
+
+
+async def _ollama_models(url):
+    try:
+        async with httpx.AsyncClient(timeout=4) as c:
+            r = await c.get(url.rstrip("/") + "/api/tags")
+            return [m["name"] for m in r.json().get("models", [])]
+    except Exception:
+        return None
+
+
+@app.get("/api/admin/office")
+async def office_get():
+    on = config.LLM_PROVIDER == "ollama"
+    models = await _ollama_models(config.OLLAMA_URL) if on else None
+    return {"enabled": on, "url": config.OLLAMA_URL, "model": config.OLLAMA_MODEL, "reachable": models is not None,
+            "models": models or [], "model_present": bool(models) and any(m.split(":")[0] == config.OLLAMA_MODEL.split(":")[0] for m in models)}
+
+
+@app.post("/api/admin/office")
+async def office_set(body: OfficeModel, request: Request):
+    """Connects (or disconnects) the office PC that runs the larger model through Ollama."""
+    _admin(request)
+    if not body.url:
+        config.save(provider="none")
+        return await office_get()
+    if not body.url.startswith(("http://", "https://")):
+        raise HTTPException(400, "The address must start with http:// or https://")
+    config.save(provider="ollama", ollama_url=body.url.rstrip("/"), ollama_model=body.model or config.OLLAMA_MODEL)
+    return await office_get()
 
 
 app.mount("/", StaticFiles(directory=config.WEB_DIR, html=True), name="web")

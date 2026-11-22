@@ -97,3 +97,41 @@ jobs:
           echo; tasklist //FI "IMAGENAME eq llama-server.exe" || true
           echo "unload: $(curl -s -X POST http://127.0.0.1:8720/local/unload)"; sleep 3
           echo "after unload: $(curl -s http://127.0.0.1:8720/local/status)"; tasklist //FI "IMAGENAME eq llama-server.exe" || true
+
+  library:
+    name: Windows Library program (server PC)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env: {PYTHONUTF8: "1"}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -q -r requirements.txt pyinstaller
+      - name: Build DexMentor Library
+        run: >
+          pyinstaller --noconfirm --onedir --noconsole --name DexMentorLibrary --icon desktop/dexmentor.ico
+          --add-data "web;web" --collect-all fastembed --collect-all onnxruntime --collect-all pymupdf
+          --collect-all tokenizers --collect-submodules uvicorn --collect-submodules docx --collect-submodules pptx
+          --collect-submodules openpyxl --collect-data docx --collect-data pptx --hidden-import anthropic
+          desktop/library_entry.py
+      - uses: actions/upload-artifact@v4
+        with: {name: DexMentorLibrary-windows, path: dist/DexMentorLibrary}
+      - name: Start it, add documents through the Library desk API, ask a question
+        shell: bash
+        run: |
+          python eval/make_corpus.py corpus
+          du -sh dist/DexMentorLibrary | cut -f1
+          ./dist/DexMentorLibrary/DexMentorLibrary.exe --no-window &
+          for i in $(seq 60); do curl -sf http://127.0.0.1:8700/api/status > /dev/null && break; sleep 2; done
+          curl -s http://127.0.0.1:8700/api/status || { echo SERVER DID NOT START; cat dist/DexMentorLibrary/kb/server.log; exit 1; }
+          echo; curl -s http://127.0.0.1:8700/api/admin/check; echo
+          for f in corpus/*; do curl -s -X PUT --data-binary "@$f" "http://127.0.0.1:8700/api/admin/files/$(basename "$f" | sed 's/ /%20/g')"; echo; done
+          for i in $(seq 90); do S=$(curl -s http://127.0.0.1:8700/api/status); echo "$S" | grep -q '"documents":4' && echo "$S" | grep -q '"state":"idle"' && break; sleep 2; done
+          echo "$S"
+          curl -s http://127.0.0.1:8700/api/documents; echo
+          curl -s -X POST http://127.0.0.1:8700/api/chat -H "content-type: application/json" -d '{"messages":[{"role":"user","content":"What torque for M20 bolts on a 300# flange?"}]}' | head -c 900; echo
+          curl -s -o page.png -w "page image: %{http_code} %{size_download} bytes\n" "http://127.0.0.1:8700/api/docs/1/page/1.png"
+          curl -s -o index.html -w "ui: %{http_code} %{size_download} bytes\n" http://127.0.0.1:8700/
+          echo "--- server log"; tail -15 dist/DexMentorLibrary/kb/server.log
+          echo "$S" | grep -q '"documents":4' || exit 1

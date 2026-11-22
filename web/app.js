@@ -400,28 +400,95 @@ async function refreshLocal() {
 let localTimer = null;
 async function pollLocal() { clearTimeout(localTimer); const fast = await refreshLocal(); if (local) localTimer = setTimeout(pollLocal, fast ? 1000 : 8000); }
 
-// ---------- status + library ----------
+// ---------- status ----------
 async function refresh() {
   try {
-    const s = await (await fetch('api/status')).json();
+    const r = await fetch('api/status'); if (!r.ok) throw 0; const s = await r.json();
     document.title = s.app; $('appName').textContent = s.app;
-    const working = s.index.state !== 'idle'; serverLLM = !!s.llm_available;
+    const working = s.index.state !== 'idle'; serverLLM = !!s.llm_available; status = s;
+    // English is the default. Simple English and Tanglish need the office model, so they appear only when it is connected.
+    $('style').hidden = !serverLLM; if (!serverLLM && style !== 'english') { style = 'english'; paintStyle(); }
     $('dot').className = 'led ' + (working ? 'busy' : 'ok');
     $('libText').textContent = working ? `indexing ${s.index.done}/${s.index.total}` : `${s.documents} docs`;
-    $('libSummary').textContent = `${s.documents} documents, ${s.chunks} passages. Server model: ${s.llm}. Semantic search: ${s.index.embeddings}.` +
-      (s.index.errors.length ? ` ${s.index.errors.length} file(s) failed: ${s.index.errors.join('; ')}` : '');
-    const first = !lib || lib.documents !== s.documents;
-    if (first) { lib = { documents: s.documents, chunks: s.chunks, docs: await (await fetch('api/documents')).json() }; if (!messages.length) render(); }
+    const changed = !lib || lib.documents !== s.documents || lib.chunks !== s.chunks;
+    if (changed) { lib = { documents: s.documents, chunks: s.chunks, docs: await (await fetch('api/documents')).json() }; if (!messages.length) render(); }
+    if (!$('desk').hidden) paintDesk();
+    if ($('connectDlg').open) $('connectDlg').close();
     return working;
-  } catch { $('dot').className = 'led bad'; $('libText').textContent = 'offline'; return false; }
+  } catch {
+    $('dot').className = 'led bad'; $('libText').textContent = 'offline';
+    if (local && !$('connectDlg').open) { $('serverUrl').value = local.server_url || ''; $('connectDlg').showModal(); }
+    return false;
+  }
 }
-async function poll() { const working = await refresh(); setTimeout(poll, working ? 1500 : 20000); }
-$('libBtn').onclick = async () => {
-  $('libDlg').showModal(); await refresh();
-  $('libList').innerHTML = (lib?.docs || []).map((d) => `<div class="doc"><div>${esc(d.name)}<small>${esc(d.note || '')}</small></div>
-    <div><small>${d.pages} ${d.kind === 'xlsx' ? 'sheets' : 'pages'} · ${d.chunks} passages</small></div></div>`).join('') || '<p>No documents yet. Copy files into the library folder on the server.</p>';
+let status = null, pollTimer = null;
+async function poll() { clearTimeout(pollTimer); const working = await refresh(); pollTimer = setTimeout(poll, working || !$('desk').hidden ? 1500 : 20000); }
+$('connectBtn').onclick = async () => {
+  const r = await fetch('local/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ server_url: $('serverUrl').value }) });
+  if (!r.ok) { $('connectErr').textContent = (await r.json()).error; return; }
+  $('connectErr').textContent = 'Trying…'; await refreshLocal(); if (!(await refresh()) && $('connectDlg').open) $('connectErr').textContent = 'Still no answer from that address. Check it and that the server PC is on.';
 };
-$('libClose').onclick = () => $('libDlg').close();
-$('reindex').onclick = async () => { await fetch('api/reindex', { method: 'POST' }); refresh(); setTimeout(poll, 500); };
+
+// ---------- library desk: add documents, watch them being read, check what was read ----------
+let admin = false, pin = sessionStorage.getItem('pin') || '', inspecting = null, jobs = [];
+const adminHeaders = () => (pin ? { 'X-Admin-Pin': pin } : {});
+async function openDesk() {
+  $('desk').hidden = false;
+  const c = await (await fetch('api/admin/check', { headers: adminHeaders() })).json();
+  admin = c.admin; $('drop').hidden = !admin; $('pinBar').hidden = admin;
+  paintOffice(); poll();
+}
+function paintDesk() {
+  const s = status, docs = lib?.docs || [];
+  $('deskSummary').textContent = `${s.documents} documents · ${s.chunks} passages · meaning search ${s.index.embeddings} · engineers connect to ${s.address}`;
+  const log = Object.fromEntries((s.index.log || []).map((e) => [e.name, e]));
+  let prog = jobs.map((j) => `<div class="job ${j.state}"><span>${esc(j.name)}</span><div class="bar"><i style="width:${j.pct}%"></i></div><span>${j.state === 'err' ? esc(j.msg) : j.pct < 100 ? j.pct + '%' : 'received'}</span></div>`).join('');
+  if (s.index.state !== 'idle') prog += `<div class="pipe"><div class="st done"><i></i>Receive</div><div class="ln done"></div><div class="st ${s.index.state === 'indexing' ? 'now' : 'done'}"><i></i>Read</div><div class="ln ${s.index.state === 'indexing' ? 'now' : 'done'}"></div><div class="st ${s.index.state === 'embedding' ? 'now' : ''}"><i></i>Index</div><div class="ln"></div><div class="st"><i></i>Ready</div><span class="clock">${s.index.done}/${s.index.total}</span></div><div class="job"><span>${esc(s.index.current || 'building the meaning index')}</span></div>`;
+  $('deskProgress').innerHTML = prog;
+  $('register').innerHTML = docs.length ? `<table><thead><tr><th>No.</th><th>Document</th><th>Type</th><th>Pages</th><th>Passages</th><th>Tables</th><th></th></tr></thead><tbody>` +
+    docs.map((d, i) => `<tr data-id="${d.id}" class="${inspecting === d.id ? 'sel' : ''}"><td class="mono">${pad(i + 1)}</td><td class="nm">${esc(d.name)}${d.note ? `<small>${esc(d.note)}</small>` : ''}${log[d.name]?.error ? `<small>${esc(log[d.name].error)}</small>` : ''}</td><td class="mono">${esc(d.kind.toUpperCase())}</td><td class="mono">${d.pages}</td><td class="mono">${d.chunks}</td><td class="mono">${d.tables}</td><td>${admin ? '<button class="rm" title="Remove from the library">✕</button>' : ''}</td></tr>`).join('') + '</tbody></table>'
+    : '<p class="hint">The library is empty. Add your standards, design bases and reference documents to begin.</p>';
+  const failed = (s.index.errors || []).length; if (failed) $('deskProgress').innerHTML += `<div class="job err">${failed} file(s) could not be read: ${esc(s.index.errors.join('; '))}</div>`;
+}
+$('register').addEventListener('click', async (e) => {
+  const tr = e.target.closest('tr[data-id]'); if (!tr) return; const id = +tr.dataset.id, d = lib.docs.find((x) => x.id === id);
+  if (e.target.classList.contains('rm')) {
+    if (!confirm(`Remove "${d.name}" from the library? The file is deleted from the server's library folder.`)) return;
+    await fetch(`api/admin/docs/${id}`, { method: 'DELETE', headers: adminHeaders() }); if (inspecting === id) { inspecting = null; $('inspect').innerHTML = ''; } lib = null; return poll();
+  }
+  inspecting = id; paintDesk();
+  const ps = await (await fetch(`api/admin/docs/${id}/passages`)).json();
+  $('inspect').innerHTML = `<p class="hint"><b>${esc(d.name)}</b>: ${ps.length} passages, ${ps.filter((p) => p.kind === 'table').length} tables. Compare a few against the original.</p>` +
+    ps.map((p) => `<div class="psg ${p.kind}"><div class="cap"><b>${esc(p.kind)}</b><span>${esc(p.loc)}</span><span>${esc(p.heading || '')}</span></div>${md(p.text, false)}</div>`).join('');
+});
+function sendFiles(files) {
+  [...files].forEach((f) => {
+    const j = { name: f.name, pct: 0, state: '' }; jobs.unshift(j); jobs = jobs.slice(0, 12);
+    const x = new XMLHttpRequest(); x.open('PUT', 'api/admin/files/' + encodeURIComponent(f.name));
+    if (pin) x.setRequestHeader('X-Admin-Pin', pin);
+    x.upload.onprogress = (e) => { j.pct = Math.round(e.loaded / e.total * 100); paintDesk(); };
+    x.onload = () => { if (x.status === 200) { j.pct = 100; j.state = 'done'; } else { j.state = 'err'; try { j.msg = JSON.parse(x.responseText).detail; } catch { j.msg = 'failed'; } } lib = null; poll(); };
+    x.onerror = () => { j.state = 'err'; j.msg = 'connection lost'; paintDesk(); };
+    x.send(f);
+  });
+  paintDesk();
+}
+$('fileInput').onchange = (e) => { sendFiles(e.target.files); e.target.value = ''; };
+['dragover', 'dragleave', 'drop'].forEach((t) => $('drop').addEventListener(t, (e) => { e.preventDefault(); $('drop').classList.toggle('over', t === 'dragover'); if (t === 'drop') sendFiles(e.dataTransfer.files); }));
+$('pinBtn').onclick = async () => { pin = $('pinInput').value; sessionStorage.setItem('pin', pin); await openDesk(); if (!admin) { pin = ''; $('pinInput').value = ''; $('pinInput').placeholder = 'Wrong PIN, try again'; } };
+async function paintOffice(o) {
+  o = o || await (await fetch('api/admin/office')).json(); const c = $('officeCard'); c.hidden = false;
+  const state = !o.enabled ? 'Not connected' : !o.reachable ? 'Cannot reach that PC' : !o.model_present ? 'Reached, but the model is not installed there' : 'Connected';
+  c.innerHTML = `<b><i class="led ${o.enabled && o.reachable && o.model_present ? 'ok' : o.enabled ? 'bad' : ''}"></i>Office model · ${state}</b>
+    A larger model on the office PC (through Ollama) adds deeper answers, Simple English and Tanglish for everyone. Without it the app works in English.` +
+    (admin ? `<div class="row"><input id="offUrl" placeholder="http://gaming-pc:11434" value="${o.enabled ? esc(o.url) : ''}"><input id="offModel" placeholder="model name" value="${esc(o.model)}"></div>
+      <div class="row"><button class="ghost" id="offSave">Connect and test</button>${o.enabled ? '<button class="ghost" id="offOff">Disconnect</button>' : ''}</div>` +
+      (o.reachable && o.models.length ? `<div class="mono" style="margin-top:8px">Installed there: ${o.models.map(esc).join(', ')}</div>` : '') : '');
+  const set = async (url) => { const r = await fetch('api/admin/office', { method: 'POST', headers: { 'Content-Type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ url, model: $('offModel').value.trim() }) }); paintOffice(await r.json()); refresh(); };
+  if (admin) { $('offSave').onclick = () => set($('offUrl').value.trim() || 'http://127.0.0.1:11434'); if ($('offOff')) $('offOff').onclick = () => set(''); }
+}
+$('libBtn').onclick = openDesk;
+$('deskClose').onclick = () => { $('desk').hidden = true; };
 
 renderChats(); render(); poll(); pollLocal();
+if (location.hash === '#desk') openDesk();

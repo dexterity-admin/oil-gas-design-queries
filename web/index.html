@@ -78,11 +78,39 @@
   </main>
 </div>
 
-<dialog id="libDlg">
-  <div class="cap">Library</div>
-  <p id="libSummary"></p>
-  <div id="libList"></div>
-  <div class="dlgBtns"><button id="reindex" class="ghost">Re-scan library folder</button><button id="libClose" class="cta">Close</button></div>
+<section id="desk" hidden>
+  <div class="deskBar">
+    <span class="cap">Library desk</span><span id="deskSummary" class="mono"></span><span class="grow"></span>
+    <button id="deskClose" class="tool" title="Close"><svg viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15"/></svg></button>
+  </div>
+  <div class="deskBody">
+    <div class="deskLeft">
+      <div id="pinBar" class="unit" hidden>
+        <b><i class="led"></i>Read-only here</b>Documents are added at the server PC. With the admin PIN you can add them from this PC too.
+        <div class="row"><input id="pinInput" type="password" placeholder="Admin PIN" autocomplete="off"><button id="pinBtn" class="ghost">Unlock</button></div>
+      </div>
+      <label id="drop" hidden>
+        <input id="fileInput" type="file" multiple accept=".pdf,.docx,.xlsx,.xlsm,.pptx" hidden>
+        <svg viewBox="0 0 20 20"><path d="M10 13V3M6 7l4-4 4 4M3 13v3h14v-3"/></svg>
+        <b>Add standards and design documents</b><span>Drop files here or click to browse · PDF, Word, Excel, PowerPoint</span>
+      </label>
+      <div id="deskProgress"></div>
+      <div class="cap">Document register</div>
+      <div id="register"></div>
+      <div id="officeCard" class="unit" hidden></div>
+    </div>
+    <div class="deskRight">
+      <div class="cap">Inspection: what DexMentor read from the document</div>
+      <div id="inspect"><p class="hint">Select a document in the register to check its passages and tables. If a table looks wrong here, answers from it will be wrong too.</p></div>
+    </div>
+  </div>
+</section>
+
+<dialog id="connectDlg">
+  <div class="cap">Connect to your office server</div>
+  <p>DexMentor could not reach the Library server. Enter its address (ask whoever set it up), for example <span class="mono">http://192.168.1.20:8700</span>.</p>
+  <div class="row"><input id="serverUrl" placeholder="http://server-pc:8700"><button id="connectBtn" class="cta">Connect</button></div>
+  <div id="connectErr" class="err"></div>
 </dialog>
 <script src="app.js"></script>
 </body>
