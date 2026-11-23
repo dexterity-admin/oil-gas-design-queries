@@ -1,13 +1,23 @@
 // Thin client: search and page rendering happen on the office server. The answer is written
 // either by the server's model, or (inside the desktop app) by the small model on this PC.
 const $ = (id) => document.getElementById(id);
-const MAX_TURNS = 6; // how many earlier question/answer pairs are sent as context
+// How many earlier question/answer pairs travel with a follow-up. It is a rolling window, not a
+// limit: people can keep asking for as long as they like, older turns simply stop being sent.
+const CONTEXT_TURNS = 6;
 const store = {
   get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } },
 };
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 const pad = (n) => String(n).padStart(2, '0');
+// The thread is redrawn often while an answer is written. An entrance plays once: an element that
+// started appearing t ms ago gets a negative delay, so a redraw continues its animation instead of
+// restarting it, and after two seconds it is drawn still. Use it as the end of a class attribute:
+// class="turn${enter(u.at)}" gives class="turn in" style="--t:-300ms".
+function enter(t, cls = 'in', d = 0) {
+  const ago = Date.now() - (t || 0);
+  return ago < 1800 ? ` ${cls}" style="--t:${d - ago}ms` : '';
+}
 
 // ---------- theme + answer language ----------
 const setTheme = (t) => { document.documentElement.dataset.theme = t; store.set('theme', t); };
@@ -22,7 +32,7 @@ paintStyle();
 let chats = store.get('chats', []);
 let current = chats.find((c) => c.id === store.get('current')) || null;
 let messages = current ? current.messages : [];
-let busy = false, ref = null, local = null, tick = null, lib = null, activeSrc = null, serverLLM = false;
+let busy = false, ref = null, local = null, tick = null, lib = null, activeSrc = null, serverLLM = false, heroAt = Date.now();
 
 function save() {
   if (messages.length && !current) {
@@ -30,6 +40,9 @@ function save() {
     chats.unshift(current);
   }
   if (current) { current.updated = Date.now(); chats.sort((a, b) => b.updated - a.updated); }
+  persist();
+}
+function persist() {
   let keep = 200; while (!store.set('chats', chats.slice(0, keep)) && keep > 5) keep = Math.floor(keep / 2); // full storage: let the oldest go
   store.set('current', current?.id || null);
   renderChats();
@@ -39,23 +52,49 @@ function renderChats() {
   $('chatList').innerHTML = chats.map((c) => {
     const age = now - c.updated, g = age < day ? 'Today' : age < 7 * day ? 'This week' : 'Earlier';
     const head = g !== last ? `<div class="grp">${last = g}</div>` : '';
-    return `${head}<div class="chat${c === current ? ' active' : ''}" data-id="${c.id}"><button class="t" title="${esc(c.title)}">${esc(c.title)}</button><button class="x" title="Delete this chat" aria-label="Delete this chat">✕</button></div>`;
+    return `${head}<div class="chat${c === current ? ' active' : ''}" data-id="${c.id}"><button class="t" title="${esc(c.title)} (double-click to rename)">${esc(c.title)}</button>` +
+      '<button class="e" title="Rename this chat" aria-label="Rename this chat"><svg viewBox="0 0 20 20"><path d="M12.5 4.5l3 3L7 16H4v-3z"/></svg></button>' +
+      '<button class="x" title="Delete this chat" aria-label="Delete this chat">✕</button></div>';
   }).join('') || '<div class="grp">Nothing logged yet</div>';
+}
+// Rename in place: Enter or leaving the box saves, Esc puts the old name back.
+function renameChat(row, c) {
+  const box = document.createElement('input');
+  box.className = 'rename'; box.value = c.title; box.maxLength = 80; box.setAttribute('aria-label', 'Chat name');
+  row.querySelector('.t').replaceWith(box); row.classList.add('editing');
+  box.focus(); box.select();
+  let done = false;
+  const finish = (keep) => {
+    if (done) return; done = true;
+    const v = box.value.replace(/\s+/g, ' ').trim();
+    if (keep && v && v !== c.title) { c.title = v; persist(); } else renderChats();
+  };
+  box.onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
+  };
+  box.onblur = () => finish(true);
 }
 function openChat(c) {
   if (busy) return;
   current = c; messages = c ? c.messages : []; closeRef(); store.set('current', c?.id || null);
+  if (!messages.length) heroAt = Date.now();
   renderChats(); render(); if (innerWidth <= 860) $('side').classList.add('closed'); $('input').focus();
 }
 $('chatList').addEventListener('click', (e) => {
-  const row = e.target.closest('.chat'); if (!row) return;
-  const c = chats.find((x) => x.id === row.dataset.id);
-  if (e.target.classList.contains('x')) {
+  const row = e.target.closest('.chat'); if (!row || row.classList.contains('editing')) return;
+  const c = chats.find((x) => x.id === row.dataset.id), b = e.target.closest('button');
+  if (b?.classList.contains('x')) {
     if (busy || !confirm(`Delete "${c.title}"?`)) return;
     chats = chats.filter((x) => x !== c); if (c === current) openChat(null); save();
-  } else openChat(c);
+  } else if (b?.classList.contains('e')) renameChat(row, c);
+  else if (e.detail < 2) openChat(c); // the second click of a double-click renames instead
 });
-$('newBtn').onclick = () => openChat(null);
+$('chatList').addEventListener('dblclick', (e) => {
+  const row = e.target.closest('.chat'); if (!row || row.classList.contains('editing') || !e.target.closest('.t')) return;
+  renameChat(row, chats.find((x) => x.id === row.dataset.id));
+});
+$('newBtn').onclick = $('topicBtn').onclick = () => openChat(null);
 $('clearAll').onclick = () => { if (busy || !chats.length || !confirm('Delete every saved chat on this PC? This cannot be undone.')) return; chats = []; openChat(null); save(); };
 $('menuBtn').onclick = () => $('side').classList.toggle('closed');
 if (innerWidth <= 860) $('side').classList.add('closed');
@@ -120,7 +159,16 @@ function pipeHtml(bot) {
 function hero() {
   const docs = lib?.docs || [];
   const starts = docs.slice(0, 4).map((d, i) => `<button data-q="What does ${esc(d.name.replace(/\.[a-z]+$/i, ''))} cover?"><i>${pad(i + 1)}</i>What does ${esc(d.name.replace(/\.[a-z]+$/i, ''))} cover?</button>`).join('');
-  return `<div class="hero"><div class="cap">Dexterity International · Contractors &amp; Engineers F.Z.C</div>
+  // A line of flow from the question to the highlighted page: drawn once when the page opens, then still.
+  const flow = `<svg class="flow" viewBox="0 0 520 120" aria-hidden="true">
+    <path class="run" pathLength="1" d="M40 62H250c8 0 12 4 12 12v6c0 8 4 12 12 12h116"/>
+    <circle class="qn" cx="22" cy="62" r="17"/><text class="ql" x="22" y="66.5">Q</text>
+    <g class="bal" style="--d:420ms"><circle cx="128" cy="62" r="10"/><text x="128" y="66">1</text></g>
+    <g class="bal" style="--d:640ms"><circle cx="322" cy="92" r="10"/><text x="322" y="96">2</text></g>
+    <g class="pg" style="--d:560ms"><path d="M408 12h64l18 18v84h-82z"/><path class="hair" d="M472 12v18h18M416 96h66M448 96v18"/>
+      <path class="hair" d="M418 34h40M418 44h56M418 54h50M418 76h52M418 86h34"/><rect class="hl" x="414" y="58" width="68" height="13" rx="2"/></g>
+    <circle class="end" cx="398" cy="92" r="6"/><path class="tick" pathLength="1" d="M455 104l5 5 10-11"/></svg>`;
+  return `<div class="hero${enter(heroAt)}">${flow}<div class="cap">Dexterity International · Contractors &amp; Engineers F.Z.C</div>
     <h1>Ask the <em>standards</em>.<br>Check the <em>source</em>.</h1>
     <p>Every answer is written only from your own documents. Each fact carries a numbered balloon: tap it to see the exact page, highlighted.</p>
     <div class="dials"><div class="dial"><b>${lib ? lib.documents : '–'}</b><span>Documents</span></div>
@@ -131,14 +179,8 @@ function render() {
   const t = $('thread');
   const turns = messages.filter((m) => m.role === 'user').length;
   $('input').placeholder = turns ? 'Ask a follow-up…' : 'Ask about your standards and design documents…';
-  $('gauge').hidden = !turns;
-  if (turns) {
-    const used = Math.min(turns, MAX_TURNS), arc = 75.4;
-    $('gauge').innerHTML = `<svg viewBox="0 0 62 36"><path class="trk" d="M7 33a24 24 0 0148 0"/><path class="val" d="M7 33a24 24 0 0148 0" stroke-dasharray="${arc}" stroke-dashoffset="${arc * (1 - used / MAX_TURNS)}"/></svg><span>${used === MAX_TURNS ? 'oldest question drops next' : 'remembers ' + used + ' of ' + MAX_TURNS}</span><button type="button">new topic</button>`; $('gauge').classList.toggle('full', used === MAX_TURNS);
-    $('gauge').querySelector('button').onclick = () => openChat(null);
-  }
+  $('topicBtn').hidden = !turns;
   if (!messages.length) { t.innerHTML = hero(); return; }
-  const cutoff = messages.length - MAX_TURNS * 2;
   let html = '', qn = 0;
   for (let idx = 0; idx < messages.length; idx += 2) {
     const u = messages[idx], bot = messages[idx + 1] || {}; qn++;
@@ -147,22 +189,22 @@ function render() {
     const q = bot.query;
     let a = '';
     if (bot.sources?.length) {
-      a += '<div class="refs">' + bot.sources.map((s) =>
-        `<button class="slip${s === activeSrc ? ' on' : ''}" data-i="${idx + 1}" data-n="${s.n}"><span class="n">${s.n}</span><b>${esc(s.doc)}</b><span>${esc(s.doc_kind)} · ${esc(s.loc)}</span></button>`).join('') + '</div>';
+      a += '<div class="refs">' + bot.sources.map((s, i) =>
+        `<button class="slip${s === activeSrc ? ' on' : ''}${enter(bot.found, 'in', i * 60)}" data-i="${idx + 1}" data-n="${s.n}"><span class="n">${s.n}</span><b>${esc(s.doc)}</b><span>${esc(s.doc_kind)} · ${esc(s.loc)}</span></button>`).join('') + '</div>';
     }
     const live = bot.stages && last && busy;
-    if (live) a += pipeHtml(bot) + `<div class="trace" id="liveTrace">${traceHtml(bot, true)}</div><div class="card" id="liveCard" data-i="${idx + 1}" hidden></div>`;
+    if (live) a += pipeHtml(bot) + `<div class="trace" id="liveTrace">${traceHtml(bot, true)}</div><div class="card${enter(bot.wrote)}" id="liveCard" data-i="${idx + 1}" hidden></div>`;
     else if (text) a += `<div class="card${bot.none ? ' none' : ''}" data-i="${idx + 1}">${bot.none ? '<div class="cap">Not in the library</div>' : ''}${md(text)}</div>`;
     if (text && !live && bot.unverified && !bot.cut) a += bot.unverified.length
-      ? `<div class="chk bad"><b>CHECK THE SOURCE</b> ${bot.unverified.map(esc).join(', ')} ${bot.unverified.length > 1 ? 'are' : 'is'} not found in the cited documents. Do not use ${bot.unverified.length > 1 ? 'these values' : 'this value'} without checking.</div>`
-      : (bot.none ? '' : `<div class="stamp" title="Every number in this answer appears in the cited sources. It does not prove the right row was used: check the highlighted page."><svg viewBox="0 0 20 20"><path d="M4 10.5l4 4 8-9"/></svg><b>NUMBERS FOUND IN SOURCES</b><span>${(text.match(/\d+(?:\.\d+)?/g) || []).length} checked · confirm on the sheet</span></div>`);
+      ? `<div class="chk bad${enter(bot.at)}"><b>CHECK THE SOURCE</b>${bot.unverified.map(esc).join(', ')} ${bot.unverified.length > 1 ? 'are' : 'is'} not found in the cited documents. Do not use ${bot.unverified.length > 1 ? 'these values' : 'this value'} without checking.</div>`
+      : (bot.none ? '' : `<div class="stamp${enter(bot.at, 'in', 200)}" title="Every number in this answer appears in the cited sources. It does not prove the right row was used: check the highlighted page."><svg viewBox="0 0 20 20"><path pathLength="1" d="M4 10.5l4 4 8-9"/></svg><b>NUMBERS FOUND IN SOURCES</b><span>${(text.match(/\d+(?:\.\d+)?/g) || []).length} checked · confirm on the sheet</span></div>`);
     if (text && !live && bot.english) a += `<details class="meta"><summary>English original</summary><div class="card">${md(bot.english)}</div></details>`;
     if (bot.error) a += `<div class="err">${esc(bot.error)}</div>`;
     if (text && !live && bot.took) a += `<details class="meta"><summary>${bot.none ? 'No answer' : 'Answered'} in ${bot.took} s · ${bot.sources?.length || 0} sources${bot.by ? ' · ' + esc(bot.by) : ''}${bot.trace?.length ? ' · how it was worked out' : ''}</summary><div class="trace">${traceHtml(bot, false)}</div></details>`;
     if (text && last && !busy && bot.by === 'this PC' && serverLLM) a += '<button class="ghost again" data-again="1">Get a deeper answer from the office model</button>';
-    if (follow.length && last && !busy) a += '<div class="next"><div class="cap">Continue the thread</div>' + follow.map((f) => `<button>${esc(f)}</button>`).join('') + '</div>';
-    html += `<div class="turn${idx ? ' fu' : ''}${idx < cutoff ? ' stale' : ''}"><div class="node">Q${pad(qn)}</div>
-      <div><div class="q">${esc(u.content)}</div>${idx ? `<div class="fuTag"><b>FOLLOW-UP</b>${q && q.toLowerCase() !== u.content.toLowerCase() ? ' · read as “' + esc(q) + '”' : ''}${idx < cutoff ? ' · no longer in context' : ''}</div>` : ''}</div>
+    if (follow.length && last && !busy) a += '<div class="next"><div class="cap">Continue the thread</div>' + follow.map((f, i) => `<button class="${enter(bot.at, 'in', 300 + i * 60).slice(1)}">${esc(f)}</button>`).join('') + '</div>';
+    html += `<div class="turn${idx ? ' fu' : ''}${enter(u.at)}"><div class="node">Q${pad(qn)}</div>
+      <div><div class="q">${esc(u.content)}</div>${idx ? `<div class="fuTag"><b>FOLLOW-UP</b>${q && q.toLowerCase() !== u.content.toLowerCase() ? ' · read as “' + esc(q) + '”' : ''}</div>` : ''}</div>
       <div class="a">${a}</div></div>`;
   }
   t.innerHTML = html;
@@ -175,12 +217,12 @@ function render() {
 // which sheets are being read, any notes the model makes), line by line as it happens.
 function traceHtml(bot, live) {
   const lines = bot.trace || [];
-  return lines.map((l, i) => `<div class="tl ${l.k || ''}${live && i === lines.length - 1 ? ' cur' : ''}"><i></i><span>${esc(l.t)}</span></div>`).join('');
+  return lines.map((l, i) => `<div class="tl ${l.k || ''}${live ? enter(l.at) : ''}"><i></i><span>${esc(l.t)}</span>${live && i === lines.length - 1 ? '<b class="spin"></b>' : ''}</div>`).join('');
 }
 function trace(bot, t, k = '', same = false) {
   bot.trace = bot.trace || [];
   const lastLine = bot.trace[bot.trace.length - 1];
-  if (same && lastLine && lastLine.k === k) lastLine.t = t; else bot.trace.push({ t, k });
+  if (same && lastLine && lastLine.k === k) lastLine.t = t; else bot.trace.push({ t, k, at: Date.now() });
   const el = $('liveTrace'); if (el) { el.innerHTML = traceHtml(bot, true); $('thread').scrollTop = $('thread').scrollHeight; }
 }
 // Text arrives in bursts; the pen writes it out at an even pace so the page never jumps or stalls.
@@ -242,7 +284,7 @@ async function readLines(res, onLine) {
 }
 const stage = (bot, name) => { const i = bot.stages.indexOf(name); if (i > bot.stage) { bot.stage = i; render(); } };
 function showSources(bot, sources, query) {
-  bot.sources = sources; bot.query = query;
+  bot.sources = sources; bot.query = query; bot.found = Date.now();
   trace(bot, sources.length ? `Found ${sources.length} matching passage${sources.length > 1 ? 's' : ''} in ${new Set(sources.map((s) => s.doc)).size} document(s)` : 'Nothing in the library matches', 'hit');
   if (sources[0] && innerWidth > 1100) openSource(sources[0]); else render();
   sources.forEach((s, i) => setTimeout(() => { if (bot.stages && !bot.content) trace(bot, `Reading [${s.n}] ${s.doc} · ${s.loc}`, 'read'); }, 350 * (i + 1)));
@@ -266,7 +308,7 @@ async function localLLM(req, onText, onNote) {
   return finished;
 }
 const noteTaker = (bot) => { let n = ''; return (t) => { n += t; trace(bot, 'Model notes: ' + n.replace(/\s+/g, ' ').slice(-220), 'note', true); }; };
-const wrote = (bot) => { if (!bot.wrote) { bot.wrote = 1; trace(bot, 'Writing the answer', 'write'); document.querySelector('.sheet')?.classList.remove('scanning'); } };
+const wrote = (bot) => { if (!bot.wrote) { bot.wrote = Date.now(); trace(bot, 'Writing the answer', 'write'); document.querySelector('.sheet')?.classList.remove('scanning'); } };
 async function askLocal(bot, history) {
   bot.by = 'this PC'; let query = null;
   const rw = await (await post('api/prepare', { messages: history, style, stage: 'rewrite' })).json();
@@ -319,10 +361,10 @@ async function ask(q, forceServer = false) {
   q = q.trim(); if (!q || busy) return;
   busy = true; $('send').disabled = true; closeRef();
   if (!current) messages = [];
-  messages.push({ role: 'user', content: q });
-  const history = messages.slice(-(MAX_TURNS * 2 + 1)).map((m) => ({ role: m.role, content: m.content }));
+  messages.push({ role: 'user', content: q, at: Date.now() });
+  const history = messages.slice(-(CONTEXT_TURNS * 2 + 1)).map((m) => ({ role: m.role, content: m.content }));
   const bot = { role: 'assistant', content: '', sources: [], stages: ['Understand', 'Search', 'Read', 'Write'], stage: 0, secs: 0 };
-  bot.trace = [{ t: messages.length > 1 ? `Follow-up received · carrying ${Math.min(MAX_TURNS, (messages.length - 1) / 2)} earlier question(s) as context` : 'Question received', k: 'in' }];
+  bot.trace = [{ t: messages.length > 1 ? 'Follow-up received · reading it together with the questions before it' : 'Question received', k: 'in' }];
   messages.push(bot); save(); render(); pump(bot);
   const started = Date.now();
   tick = setInterval(() => { bot.secs = Math.round((Date.now() - started) / 1000); const c = document.querySelector('.clock'); if (c) c.textContent = pad(Math.floor(bot.secs / 60)) + ':' + pad(bot.secs % 60); }, 1000);
@@ -341,7 +383,7 @@ async function ask(q, forceServer = false) {
   $('sr').textContent = bot.error || (bot.none ? 'The library does not cover this.' : `Answer ready, ${bot.sources.length} sources.`);
   await penDone(bot); document.querySelector('.sheet')?.classList.remove('scanning');
   clearInterval(tick); delete bot.shown; delete bot.wrote; bot.took = Math.max(1, Math.round((Date.now() - started) / 1000));
-  delete bot.stages; delete bot.stage; delete bot.secs; busy = false; $('send').disabled = false;
+  delete bot.stages; delete bot.stage; delete bot.secs; delete bot.found; bot.at = Date.now(); busy = false; $('send').disabled = false;
   save(); render();
 }
 $('composer').addEventListener('submit', (e) => { e.preventDefault(); const v = $('input').value; $('input').value = ''; grow(); ask(v); });

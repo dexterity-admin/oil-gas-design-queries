@@ -32,6 +32,7 @@ DexMentor answers engineers' questions from **your company's own standards, desi
 | **Starter pack, kept private** | Keep the company's reference documents in a private GitHub repository. Connect the Library to it once (repository name and a read-only key) and it downloads, indexes and keeps them up to date. Nothing from the pack is in the public installer. |
 | **Says when it does not know** | If the library never mentions what is asked, DexMentor refuses and shows the closest passages instead of guessing. |
 | **Numbers are checked** | Every number in an answer is checked against the sources. Anything not found is flagged in red. |
+| **Chat freely** | Ask as many follow-ups as you like: recent questions travel with each new one, so "and for 300#?" just works. *New topic* starts fresh. Saved chats can be renamed (double-click the name or press the pencil). |
 | **Private** | Documents, index and models stay on your own PCs. No cloud service is used. |
 | **Light** | The engineer app is about 9 MB. It runs a small model only while answering, then frees the memory. |
 
