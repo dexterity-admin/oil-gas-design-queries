@@ -114,4 +114,4 @@ python -m pytest -q tests
 
 Every push builds both installers, smoke-tests them on Windows and publishes a [release](https://github.com/dexterity-admin/oil-gas-design-queries/releases). The landing page is redeployed whenever `site/` changes on `master`.
 
-<p align="center"><sub>Built by <b>Dexterity International</b> · Contractors &amp; Engineers F.Z.C</sub></p>
+<p align="center"><sub>Built by <b>Dexterity Design Services Pvt. Ltd.</b></sub></p>

@@ -6,7 +6,7 @@ verify or fix something, update the tables here in the same pull request.
 
 ## What DexMentor is
 
-Engineers at Dexterity International ask questions about the company's own standards, design
+Engineers at Dexterity Design Services Pvt. Ltd. ask questions about the company's own standards, design
 documents and reference books, and get plain-language answers with the exact source page shown.
 Everything runs on the office's own PCs. There is no cloud model.
 

@@ -4,7 +4,7 @@
 AppId={{6B6E2C1E-5B1E-4B7B-9B43-D3A1C0DE0001}
 AppName=DexMentor
 AppVersion={#AppVersion}
-AppPublisher=Dexterity International
+AppPublisher=Dexterity Design Services Pvt. Ltd.
 DefaultDirName={localappdata}\Programs\DexMentor
 DefaultGroupName=DexMentor
 DisableProgramGroupPage=yes

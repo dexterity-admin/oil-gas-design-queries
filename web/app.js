@@ -120,7 +120,7 @@ function pipeHtml(bot) {
 function hero() {
   const docs = lib?.docs || [];
   const starts = docs.slice(0, 4).map((d, i) => `<button data-q="What does ${esc(d.name.replace(/\.[a-z]+$/i, ''))} cover?"><i>${pad(i + 1)}</i>What does ${esc(d.name.replace(/\.[a-z]+$/i, ''))} cover?</button>`).join('');
-  return `<div class="hero"><div class="cap">Dexterity International · Contractors &amp; Engineers F.Z.C</div>
+  return `<div class="hero"><div class="cap">Dexterity Design Services Pvt. Ltd.</div>
     <h1>Ask the <em>standards</em>.<br>Check the <em>source</em>.</h1>
     <p>Every answer is written only from your own documents. Each fact carries a numbered balloon: tap it to see the exact page, highlighted.</p>
     <div class="dials"><div class="dial"><b>${lib ? lib.documents : '–'}</b><span>Documents</span></div>
