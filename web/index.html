@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#071a1d">
-<link rel="icon" href="img/icon-48.png">
+<link rel="icon" href="img/favicon.ico" sizes="16x16 24x24 32x32 48x48">
 <link rel="apple-touch-icon" href="img/icon-192.png">
 <link rel="manifest" href="manifest.webmanifest">
 <title>DexMentor</title>
@@ -18,7 +18,7 @@
     </button>
     <div class="brand">
       <img class="mark" src="img/icon-192.png" alt="DexMentor">
-      <div><span id="appName">DexMentor</span><small id="byline"><img class="byMark" src="img/dexterity-mark.png" alt="">BY DEXTERITY INTERNATIONAL</small></div>
+      <div><span id="appName">DexMentor</span><small id="byline"><img class="byMark" src="img/dexterity-mark.png" alt="">BY DEXTERITY DESIGN SERVICES PVT. LTD.</small></div>
     </div>
     <button id="libBtn" class="readout" title="Library and server status">
       <i id="dot" class="led"></i><span class="k">LIBRARY</span><span id="libText" class="v">connecting</span>
@@ -44,7 +44,9 @@
       <div id="thread" role="log" aria-label="Questions and answers"></div>
       <div id="sr" class="sr" role="status" aria-live="polite"></div>
       <form id="composer">
-        <div id="gauge" title="How many earlier questions are carried into the next one" hidden></div>
+        <button type="button" id="topicBtn" aria-label="New topic" title="Start a fresh chat. This one stays in Saved chats." hidden>
+          <svg viewBox="0 0 20 20"><path d="M10 4v12M4 10h12"/></svg><span>New topic</span>
+        </button>
         <div class="inputWrap">
           <textarea id="input" rows="1" placeholder="Ask about your standards and design documents…" autofocus></textarea>
           <button type="button" id="mic" class="tool" title="Dictate" hidden>

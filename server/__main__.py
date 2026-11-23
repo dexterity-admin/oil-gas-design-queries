@@ -28,7 +28,11 @@ def open_desk():
                 r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
                 r"C:\Program Files\Google\Chrome\Application\chrome.exe"):
         if os.path.exists(exe):
-            subprocess.Popen([exe, "--app=" + url, "--window-size=1360,860"])
+            try:  # the packaged Library runs under a CPU cap (desktop/winlimits.py); its window must not
+                from winlimits import popen_outside
+            except ImportError:
+                popen_outside = subprocess.Popen
+            popen_outside([exe, "--app=" + url, "--window-size=1360,860"])
             return
     webbrowser.open(url)
 

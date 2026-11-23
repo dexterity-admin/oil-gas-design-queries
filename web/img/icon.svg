@@ -1,21 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#35a3b0"/><stop offset="1" stop-color="#1b6a74"/></linearGradient>
-    <filter id="s" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#0b2b30" flood-opacity=".45"/></filter>
-  </defs>
-  <!-- Dexterity's rounded diamond -->
-  <rect x="92" y="92" width="328" height="328" rx="78" transform="rotate(45 256 256)" fill="url(#g)"/>
-  <!-- the source sheet, drawn with the logo's white bracket stroke -->
-  <g filter="url(#s)" fill="none" stroke="#fff" stroke-width="24" stroke-linejoin="round" stroke-linecap="round">
-    <path d="M168 118h118l62 62v214H168z"/>
-    <path d="M286 118v62h62" stroke-width="16"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- DexMentor: a source sheet with a citation badge, on a Dexterity teal tile.
+       Flat fills only: PyMuPDF, which renders this, draws gradients black. -->
+  <rect x="8" y="8" width="496" height="496" rx="112" fill="#2a8c98"/>
+  <path d="M104 72h168l88 88v280H104z" fill="#fff" stroke-linejoin="round"/>
+  <path d="M272 72v88h88z" fill="#cfe6e9"/>
+  <g stroke-linecap="round" stroke-width="26">
+    <path d="M150 196h120M150 324h70" stroke="#1e6066" opacity=".35"/>
+    <path d="M150 260h150" stroke="#2a8c98"/>
   </g>
-  <g stroke-linecap="round" stroke-width="16">
-    <path d="M204 226h92M204 322h60" stroke="#fff" opacity=".55"/>
-    <path d="M204 274h108" stroke="#f9af46"/>
-  </g>
-  <!-- the citation balloon pinned to the highlighted line -->
-  <path d="M312 274l44 62" stroke="#143f45" stroke-width="12" stroke-linecap="round"/>
-  <g filter="url(#s)"><circle cx="372" cy="360" r="82" fill="#f9af46" stroke="#143f45" stroke-width="12"/></g>
-  <path d="M344 316h28a44 44 0 010 88h-28z" fill="none" stroke="#143f45" stroke-width="20" stroke-linejoin="round"/>
+  <circle cx="366" cy="366" r="110" fill="#f7af44" stroke="#132b2e" stroke-width="22"/>
+  <path d="M338 318h26a50 50 0 010 100h-26z" fill="none" stroke="#132b2e" stroke-width="24" stroke-linejoin="round"/>
 </svg>

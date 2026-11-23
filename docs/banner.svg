@@ -52,8 +52,8 @@
 
   <!-- words -->
   <g transform="translate(64 0)">
-    <g class="l1"><rect x="0" y="62" width="34" height="34" rx="9" transform="rotate(45 17 79)" fill="#2c8c98"/><rect x="9" y="68" width="13" height="18" fill="#fbfdfd"/><circle cx="26" cy="90" r="8" fill="#f9af46" stroke="#143f45" stroke-width="2"/>
-      <text x="56" y="80" class="d" font-size="24" fill="#eaf5f7" letter-spacing="5">DEXMENTOR</text><text x="57" y="98" class="d" font-size="10.5" fill="#9ab9be" letter-spacing="3.4" font-weight="500">BY DEXTERITY INTERNATIONAL</text></g>
+    <g class="l1"><rect x="0" y="62" width="34" height="34" rx="8" fill="#2a8c98"/><rect x="7" y="66" width="15" height="22" fill="#fbfdfd"/><circle cx="24" cy="86" r="8" fill="#f7af44" stroke="#132b2e" stroke-width="2"/>
+      <text x="56" y="80" class="d" font-size="24" fill="#eaf5f7" letter-spacing="5">DEXMENTOR</text><text x="57" y="98" class="d" font-size="10.5" fill="#9ab9be" letter-spacing="3.4" font-weight="500">BY DEXTERITY DESIGN SERVICES PVT. LTD.</text></g>
     <text class="d l2" x="0" y="172" font-size="52" fill="#eaf5f7">ASK THE <tspan fill="#f9af46">STANDARDS</tspan>.</text>
     <text class="d l3" x="0" y="232" font-size="52" fill="#eaf5f7">CHECK THE <tspan fill="#f9af46">SOURCE</tspan>.<tspan class="pen" fill="#f9af46"> ▌</tspan></text>
     <text class="m l4" x="2" y="278" font-size="14" fill="#9ab9be">Cited answers from your own standards. Private. Built for office PCs.</text>

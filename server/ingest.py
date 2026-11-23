@@ -32,7 +32,8 @@ def embedder():
     if _embedder is None:
         try:
             from fastembed import TextEmbedding
-            _embedder = TextEmbedding(config.EMBED_MODEL, cache_dir=str(config.DATA_DIR / "models"))
+            _embedder = TextEmbedding(config.EMBED_MODEL, cache_dir=str(config.DATA_DIR / "models"),
+                                  threads=config.WORK_THREADS)
             status["embeddings"] = "on"
         except Exception as e:  # no internet / not installed: keyword search still works
             _embedder = False
@@ -58,7 +59,9 @@ def _embed_missing():
             rows = con.execute("SELECT id, heading, text FROM chunks WHERE emb IS NULL LIMIT 64").fetchall()
         if not rows:
             break
-        vecs = list(m.embed([grounding.expand(r["heading"] + "\n" + r["text"])[:2000] for r in rows]))
+        # Small batches: the search model keeps its largest work buffer for good. Measured on 64 long passages:
+        # batch 256 (the default) +816 MB that never came back, batch 4 +83 MB, same speed on one thread.
+        vecs = list(m.embed([grounding.expand(r["heading"] + "\n" + r["text"])[:2000] for r in rows], batch_size=4))
         with store.db() as con:
             for r, v in zip(rows, vecs):
                 v = np.asarray(v, dtype=np.float32)
@@ -300,12 +303,27 @@ def _readable(text):
         clean = sum(ch.isalnum() or ch in ".,;:()-/%'\"&" for ch in body) / len(body)
         words = re.findall(r"[A-Za-z]{3,}", ln)
         real = [w for w in words if re.search(r"[aeiouyAEIOUY]", w) and not re.search(r"[a-z][A-Z]", w)]
-        if re.fullmatch(r"[\d.,\s-]+", ln) or (clean >= 0.85 and len(real) >= max(1, 0.6 * len(words))):
+        # A table row read off a scan ("Up to 15 24 8") has numbers and only short words. Dropping it
+        # while keeping its neighbour ("Above 15 48 16") leaves a table that looks complete and gives the
+        # wrong row's value, so such a line is kept when every piece is a plain number or a plain word.
+        row = re.search(r"\d", ln) and all(re.fullmatch(r"[\d.,/%()-]+|[A-Za-z][a-z]*\.?|[\d.]+(?:to|and|or)[\d.]+", t)
+                                           for t in ln.split())  # the reader glues "3 to 8" into "3to8"
+        if re.fullmatch(r"[\d.,\s-]+", ln) or row or (clean >= 0.85 and len(real) >= max(1, 0.6 * len(words))):
             keep.append(ln)
     return "\n".join(keep)
 
 
-def parse_pdf(path, progress=None):
+def parse_pdf(path, progress=None, lock=None):
+    """lock: the PyMuPDF lock the caller holds. It is let go between pages, so the page viewer is not
+    shut out for the hour a 445-page scanned book takes to read."""
+    reader = ocr.Reader(path)  # scanned pages are read in a worker process that ends with this document
+    try:
+        return _parse_pdf(path, progress, lock, reader)
+    finally:
+        reader.close()
+
+
+def _parse_pdf(path, progress, lock, reader):
     chunks, notes, heading, read_again = [], [], "", 0
     builtin, tesseract = ocr.available(), bool(shutil.which("tesseract"))
     with pymupdf.open(path) as doc:
@@ -318,6 +336,10 @@ def parse_pdf(path, progress=None):
         # page, contents and the like, which match every question and answer none.
         front = toc[1][0] if len(toc) >= 3 and toc[0][0] <= 2 and toc[1][0] <= 40 else 0
         for pno, page in enumerate(doc, start=1):
+            if lock is not None and pno > 1:
+                lock.release()
+                time.sleep(0.05)  # a waiting page render takes the lock here
+                lock.acquire()
             loc = "Page %d" % pno
             if pno < front and _is_scan(page):
                 continue
@@ -361,7 +383,7 @@ def parse_pdf(path, progress=None):
                     try:
                         if progress:
                             progress("reading scanned page %d of %d" % (pno, pages))
-                        fresh = [(r[0], r[1], r[2], r[3], t, 0, 0) for t, r, score in ocr.read_page(page)]
+                        fresh = [(r[0], r[1], r[2], r[3], t, 0, 0) for t, r, score in reader.read(pno)]
                     except Exception:
                         fresh = []
                 elif tesseract and empty:
@@ -585,7 +607,7 @@ def sync():
                 if p.suffix.lower() == ".pdf":
                     from .app import PDF_LOCK
                     with PDF_LOCK:
-                        pages, chunks, note = parse_pdf(p, lambda m, n=p.name: status.update(current=n + " · " + m))
+                        pages, chunks, note = parse_pdf(p, lambda m, n=p.name: status.update(current=n + " · " + m), PDF_LOCK)
                 else:
                     pages, chunks, note = PARSERS[p.suffix.lower()](p)
                 entry.update(pages=pages, passages=len(chunks), tables=sum(c["kind"] == "table" for c in chunks), note=note)

@@ -356,6 +356,42 @@ def unverified_numbers(answer, source_text):
     return bad
 
 
+def other_row_numbers(answer, source_text):
+    """Numbers the answer took from a table row the matcher ruled out for this question.
+
+    A wrong row passes unverified_numbers, because its value is in the sources. Seen on a real PC: the
+    matcher picked "Up to 15 | 24 h", a second, half-read copy of the table showed only "Above 15 | 48 h",
+    and the model answered 48 h with a green stamp. A value that sits in a ruled-out row and not in the
+    matched row is flagged; a false flag costs a look at the page, a missed one is a wrong number."""
+    matched, ruled_out, mode = set(), set(), None
+    lines = source_text.rstrip().splitlines()
+    if lines and not lines[-1].startswith("- "):  # the grounding text ends with the question: its numbers are the user's
+        matched |= {abs(v) for v, _, _ in _numbers(lines[-1])}
+    for ln in lines:
+        s = ln.strip()
+        if s == "Row that matches the question:":
+            mode = "match"
+        elif s.startswith("Other rows of the same table"):
+            mode = "other"
+        elif s.startswith("NOTE: no row of this table covers"):
+            mode = "note"  # the matcher already said this table does not answer the question: all its rows are ruled out
+        elif s == "Table, one row per line:" and mode == "note":
+            mode = "other"
+        elif s.startswith("Value that answers the question:"):
+            matched |= {abs(v) for v, _, _ in _numbers(s)}
+        elif mode in ("match", "other") and s.startswith("- "):
+            (matched if mode == "match" else ruled_out).update(abs(v) for v, _, _ in _numbers(s))
+        else:
+            mode = None
+    body = re.sub(r"\[\d{1,2}(?:\s*,\s*\d{1,2})*\]", " ", answer)
+    body = re.sub(r"(?m)^\s*\d+[.)]\s", " ", body)
+    bad = []
+    for v, _, raw in _numbers(body):
+        if abs(v) in ruled_out and abs(v) not in matched and raw not in bad:  # "±0.8" and "-0.8" are one value here
+            bad.append(raw)
+    return bad
+
+
 TANGLISH_SYSTEM = (
     "Rewrite the English answer in Tanglish: spoken Tamil written in English letters, mixed with English "
     "technical words, the way Tamil engineers talk at work. Keep every number, unit, grade, document name "
