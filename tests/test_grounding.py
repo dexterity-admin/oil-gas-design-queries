@@ -93,6 +93,19 @@ def test_number_check():                         # audit H2, C6
     assert ok("Down to -29 C.") == [] and ok("Up to 29 C.") == ["29"]
 
 
+def test_value_from_a_ruled_out_row_is_flagged():
+    # Seen on a real PC: matcher picked "Up to 15 | 24", a half-read scan copy showed only "Above 15 | 48",
+    # and the model answered 48 h. 48 is in the sources, so only this check can catch it.
+    q = "How long is the hydrotest hold for a 10 m diameter tank?"
+    src = "[1] Tank standard (table)\n" + g.table_text(TANK, q)[0] + "\n\n[3] Scan\nAbove15 48 16\n" + q
+    flag = lambda a: g.other_row_numbers(a, src)
+    assert flag("The hydrotest hold for a 10 m diameter tank is 48 hours [2].") == ["48"]
+    assert flag("Hold it for 24 hours with 8 settlement points [1].") == []
+    assert flag("Tanks up to 15 m are held for 24 hours [1].") == []      # 15 is in the matched row too
+    assert flag("Use 16 settlement points.") == ["16"]
+    assert g.other_row_numbers("48 hours", "Table, one row per line:\n- Tank diameter (m): Above 15; Hold time (h): 48") == []
+
+
 def test_coverage_gate():                        # audit H4
     passages = ["5.3 HYDROSTATIC TESTING The tank shall be filled with fresh water and held for the hold time in the table.",
                 "Bolt size Flange rating Torque (Nm) M20 300# 215", "6.1 PIPE SUPPORT SPACING maximum span between supports",

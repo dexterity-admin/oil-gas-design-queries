@@ -155,6 +155,8 @@ function render() {
     else if (text) a += `<div class="card${bot.none ? ' none' : ''}" data-i="${idx + 1}">${bot.none ? '<div class="cap">Not in the library</div>' : ''}${md(text)}</div>`;
     if (text && !live && bot.unverified && !bot.cut) a += bot.unverified.length
       ? `<div class="chk bad"><b>CHECK THE SOURCE</b> ${bot.unverified.map(esc).join(', ')} ${bot.unverified.length > 1 ? 'are' : 'is'} not found in the cited documents. Do not use ${bot.unverified.length > 1 ? 'these values' : 'this value'} without checking.</div>`
+      : bot.otherRow?.length
+      ? `<div class="chk bad"><b>CHECK THE ROW</b> ${bot.otherRow.map(esc).join(', ')} ${bot.otherRow.length > 1 ? 'come' : 'comes'} from a row of the table that does not match your question. Do not use ${bot.otherRow.length > 1 ? 'these values' : 'this value'} without checking the page.</div>`
       : (bot.none ? '' : `<div class="stamp" title="Every number in this answer appears in the cited sources. It does not prove the right row was used: check the highlighted page."><svg viewBox="0 0 20 20"><path d="M4 10.5l4 4 8-9"/></svg><b>NUMBERS FOUND IN SOURCES</b><span>${(text.match(/\d+(?:\.\d+)?/g) || []).length} checked · confirm on the sheet</span></div>`);
     if (text && !live && bot.english) a += `<details class="meta"><summary>English original</summary><div class="card">${md(bot.english)}</div></details>`;
     if (bot.error) a += `<div class="err">${esc(bot.error)}</div>`;
@@ -290,7 +292,7 @@ async function askLocal(bot, history) {
   }
   if (end !== 'stop') return; // an unfinished answer gets no check mark
   const chk = await (await post('api/verify', { answer: bot.english || bot.content, grounding: prep.grounding })).json();
-  bot.unverified = chk.unverified;
+  bot.unverified = chk.unverified; bot.otherRow = chk.other_row || [];
 }
 // Small models sometimes tack the refusal sentence onto a real answer; a real answer wins.
 function tidy(a) {
@@ -307,7 +309,7 @@ async function askServer(bot, history) {
       if (ev.query && ev.query.toLowerCase() !== history[history.length - 1].content.toLowerCase()) trace(bot, 'Reading it as: “' + ev.query + '”', 'rw');
       showSources(bot, ev.sources, ev.query); stage(bot, 'Read');
     } else if (ev.type === 'thinking') noteTaker(bot)(ev.text);
-    else if (ev.type === 'check') bot.unverified = ev.unverified;
+    else if (ev.type === 'check') { bot.unverified = ev.unverified; bot.otherRow = ev.other_row || []; }
     else if (ev.type === 'status' && /tanglish/i.test(ev.message)) trace(bot, 'Rewording in Tanglish, then checking every number', 'rw');
     else if (ev.type === 'replace') { bot.english = ev.english; bot.content = ev.text; bot.shown = 0; }
     else if (ev.type === 'delta') { wrote(bot); bot.content += ev.text; stage(bot, 'Write'); if (/^(The documents do not cover this|I could not find anything)/.test(bot.content)) bot.none = true; }

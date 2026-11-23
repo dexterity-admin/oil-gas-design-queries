@@ -53,7 +53,8 @@ costs a little accuracy; a wrong hint puts a wrong number in front of an enginee
 | `web/` | Interface (vanilla JS/CSS, bundled fonts) |
 | `installer/*.iss` | Inno Setup scripts (per-user installs; Library gets an autostart task) |
 | `eval/` | 30-question harness on four synthetic documents (`make_corpus.py`, `run_eval.py`) |
-| `tests/test_grounding.py` | Unit tests for the deterministic code |
+| `tests/` | Unit tests for the deterministic code (`test_grounding.py` matcher and checks, `test_ingest.py` scan-text filter) |
+| `eval/smoke_docs.py` | Release smoke test: a generated scanned page and a Word table must be read in full |
 | `.github/workflows/release.yml` | Tests, builds both programs, Windows smoke test, installers, publishes `v1.0.<run>` |
 | `.github/workflows/model-eval.yml` | Real-model evaluation; the full matrix runs only when a commit message contains `[eval]` |
 | `.github/workflows/pages.yml` | Landing page (`site/`) to GitHub Pages from `master` |
@@ -80,12 +81,18 @@ Useful environment variables: `LIBRARY_DIR`, `DATA_DIR`, `PORT`, `ADMIN_PIN`, `E
 
 | Area | Result | How it was checked |
 | --- | --- | --- |
-| Deterministic code | 15 unit tests pass | `tests/test_grounding.py`, run on every release build |
-| PC model (Qwen2.5 1.5B Q4_K_M) | 29 of 30, nothing invented, about 8 s per answer, 1.6 to 2.3 GB RAM | `eval/run_eval.py` through the real `DexMentor.exe` on a GitHub Windows runner, **before** the table-matcher changes of this handover |
+| Deterministic code | 18 unit tests pass | `python -m pytest tests`, run on every release build (until this change CI ran only `test_grounding.py`) |
+| PC model (Qwen2.5 1.5B Q4_K_M) | 29 of 30, nothing invented, no wrong value, 10.6 s average (max 19.4 s) | 23 Nov 2026, real office PC (i7-6700, 24 GB, Windows 10): `eval/run_eval.py` through the installed v1.0.10 `DexMentor.exe`. Same single miss as before (Tanglish valve span) |
+| Installers on a real PC | Both install per-user without admin, silently, to a chosen folder (`/DIR=`); Library 156 MB installer, 409 MB installed; engineer app 10.9 MB | 23 Nov 2026, same PC, installed by the agent from the command line (not by a person double-clicking, so SmartScreen was not seen) |
+| Model download on a real PC | Downloads (3.5 min on the office line), resumes after the app is killed mid-download, loads | Same PC: killed at 324 MB, restarted, continued from 324 MB |
+| GPU check on a GeForce GT 710 | Card found, Vulkan runner starts, first request fails with `ErrorDeviceLost` after about 37 s; the app correctly falls back to the CPU (10.7 s benchmark) | Same PC; the failure was reproduced by hand with the downloaded `runtime-gpu\llama-server.exe -ngl 99` |
+| Admin PIN | Set, checked, cleared; five wrong PINs lock that address out for five minutes | Same PC, through the API |
+| Linked network folder | A UNC folder with sub-folders: both documents found, a `.txt` skipped, files and timestamps unchanged | Same PC, `\\192.168.0.200\...` share |
+| Scan reader on Windows | Works. Progress shows "reading scanned page n of N". About 6 s a page on the i7-6700. v1.0.10 lost a whole sentence and a whole table row from a clean generated scan; fixed in this change (see below) and now covered by the release smoke test | Same PC, generated scans of the synthetic tank and piping standards |
 | Office model (Gemma 2 9B) | 29 of 30, best Tanglish | Same harness on a GitHub runner, also before the latest matcher changes |
 | Model download and load in the engineer app | Works | "Windows in-app download and load" job in `model-eval.yml` |
 | LAN auto-connect | Works on one machine | Release smoke test: launcher pointed at a dead address finds the Library by broadcast |
-| Packaged programs start | Works | Release smoke test: Library starts, takes an Excel file, engineer app sees one document |
+| Packaged programs start | Works | Release smoke test: Library starts, takes an Excel file, engineer app sees one document; then a generated scanned PDF must give back every line and number, and a Word table row must reach the prompt (`eval/smoke_docs.py`) |
 | Real pipe guide (15 pages, Word-made PDF) | 23 of 23 retrieval and row-matching checks | Local script against `server.chat.prepare`, keyword search only, no model |
 | Scanned textbook (445 pages) | Prose found and read in column order; exhibit dimensions only partly read | Same kind of local script, keyword search only, no model |
 | Private starter pack | Wrong key rejected, right key downloads and indexes | Against a local stand-in for the GitHub API, not against GitHub itself |
@@ -94,20 +101,23 @@ Useful environment variables: `LIBRARY_DIR`, `DATA_DIR`, `PORT`, `ADMIN_PIN`, `E
 
 These are the reasons this handover exists. Each one needs a machine that can download and run things.
 
-1. **Installers on a real Windows PC.** Never run by a person. Unknown: SmartScreen behaviour, firewall prompt, autostart task, uninstall, upgrade over an older version, per-user install without admin rights.
-2. **Two real PCs on one network.** Discovery has only been tested on a single machine.
+1. **Installers run by a person.** Installed by the agent from the command line on a real PC (see above). Still unknown: SmartScreen behaviour for a browser download, whether the firewall prompt appears and what a non-admin user can answer (no firewall rule existed after the install), autostart after a reboot (it is a Startup-folder shortcut, not a scheduled task), uninstall, upgrade over an older version.
+2. **Two real PCs on one network.** Discovery has only been tested on a single machine (on the real office network it found the Library at its LAN address in 5 s from a dead address).
 3. **Worded answers on the two real documents.** No model has answered questions about the pipe guide or the textbook. Only retrieval and matching were checked.
 4. **Meaning-based search on the real documents.** Embeddings could not be downloaded where the documents were tested; results there are keyword-only.
-5. **The 30-question evaluation after the latest changes.** The matcher, search and ingest changed since the last measured run. Re-run with `[eval]` in a commit message.
-6. **Scan reader on Windows.** It is bundled and the build passes, but the smoke test never feeds it a scanned page. Its speed on a slow office PC is unknown (about 2 s per page on 4 cores under Linux).
-7. **Starter pack against real GitHub** with a real fine-grained token and the real private repository.
-8. **Office model path end to end** (Ollama on a second PC, Tanglish judged by a Tamil speaker).
-9. **GPU self-benchmark** on a real GeForce GT 710.
-10. **Installer size** after adding the scan reader (it brings OpenCV).
+5. **The 30-question evaluation on GitHub after this change.** Measured locally on the real PC at 29 of 30 (above); the `[eval]` matrix on GitHub has not been re-run.
+6. **Starter pack against real GitHub** with a real fine-grained token and the real private repository.
+7. **Office model path end to end** (Ollama on a second PC, Tanglish judged by a Tamil speaker).
 
 ## Known weaknesses
 
 - **Numbers in scanned exhibits.** The reader drops numbers it is unsure of (`min_number_score` in `server/ocr.py`). Many exhibit values are therefore missing, and a misread one can still slip through. The number check compares against the same machine-read text, so it cannot catch a misread digit. Ideas: read exhibit regions at higher resolution, or require agreement between two passes before keeping a number.
+- **Words run together in scanned text.** The bundled reader (RapidOCR 1.4.4, PP-OCRv4 models) often drops the spaces in English lines ("Theminimumcorrosionallowance"). Numbers are not affected, but keyword search cannot find those words and the passage is hard to read. Per-character positions are too rough to put the spaces back safely. Check how often this happens on the real scanned book before choosing a fix (an English recognition model, or splitting lines at blank pixel columns).
+- **Scan reader fixes in this change.** (a) RapidOCR shrank each page to about 90 dpi before looking for lines and silently missed whole lines of 10 pt print; `server/ocr.py` now sets `det_limit_side_len=1600` (+0.3 s a page). (b) `_readable` in `server/ingest.py` dropped scanned table rows made of numbers and short words ("Up to 15 24 8") while keeping their neighbours ("Above 15 48 16"), so a table looked complete with a row missing; such rows are now kept. `requirements.txt` now requires RapidOCR 1.4.x so running from source reads pages the same way as the installed program (1.4.x needs Python 3.12 or older).
+- **Wrong row with a green stamp (found on the real PC, guarded in this change).** Asked "How long is the hydrotest hold for a 10 m diameter tank?", the installed v1.0.10 answered **48 hours** (right: 24) with "numbers found in sources". The matcher had given the right row; a scanned copy of the same standard, read by v1.0.10 with the "Up to 15" row missing, was also among the sources and the model took 48 from it. Besides fixing the scan reader, `grounding.other_row_numbers` now flags any number the answer takes from a row the matcher ruled out, and the app shows "CHECK THE ROW" in red instead of the green stamp. It cannot help when the matcher picked no row.
+- **GPU check leaves no reason.** On the GT 710 the GPU test fails (`ErrorDeviceLost`) and `settings.json` records `gpu_s: null` with no note, so nobody can tell later why the CPU was chosen.
+- **Data folders follow `%LOCALAPPDATA%`.** Both programs keep the model (1.1 GB), index and page cache under the user's profile on C:. They can be moved only with environment variables (`DATA_DIR`, `LIBRARY_DIR` for the Library, `DEXMENTOR_HOME` for the engineer app); the installers do not ask.
+- **Admin PIN also applies on the server PC.** Once a PIN is set, changes made on the server PC itself need it too (the comment in `server/config.py` says the server PC is always allowed).
 - **Drawings.** Hand-lettered drawings are not read. Only the page image helps the engineer.
 - **One eval miss.** Tanglish question "4 inch pipe with valve": the PC model answers 4.3 and does not apply the 25 percent reduction.
 - **No checksum** is pinned for the model and runner downloads in `desktop/models.json`.
@@ -120,26 +130,27 @@ These are the reasons this handover exists. Each one needs a machine that can do
 
 ## Next work, in order
 
-1. Install both installers from the latest release on a real Windows machine and walk the whole flow (see the checklist below). Fix what breaks.
-2. Connect the Library to the private starter pack with a real key. Confirm both documents index, including the scanned book through the built-in reader on Windows.
+1. Finish the checklist below: the items still open need a person at the PC (firewall prompt, SmartScreen, reboot), a second PC, or an upgrade.
+2. Connect the Library to the private starter pack with a real key. Confirm both documents index, including the scanned book through the built-in reader on Windows (expect about 40 minutes for 445 pages on an i7-6700).
 3. Ask real questions with the real PC model and judge the answers against the pages. Start from the question lists in this file.
-4. Re-run the 30-question evaluation with `[eval]` and compare with 29 of 30.
-5. Extend the release smoke test so it covers a scanned page and a Word-style table, using documents generated in CI (never the third-party ones).
-6. Then the weaknesses above, starting with numbers in scanned exhibits.
+4. Re-run the 30-question evaluation with `[eval]` on GitHub and compare with 29 of 30.
+5. Then the weaknesses above: words run together in scanned text, then numbers in scanned exhibits.
 
 ### Checklist for the real-machine pass
 
-- [ ] `DexMentorLibrary-Setup.exe` installs without admin rights; the Library desk opens; firewall prompt appears once
-- [ ] Add a PDF, a Word file and an Excel file by drag and drop; the register shows pages, passages and tables
-- [ ] Link a folder with sub-folders; files appear; nothing in the folder is changed
-- [ ] Starter pack: connect, documents appear under "Starter pack", "Check for new documents" works, disconnect removes them
-- [ ] Scanned document: progress shows "reading scanned page n of N"; passages are readable in the inspection pane
-- [ ] Set an admin PIN; manage the Library from a second PC with it; wrong PIN locks out after repeated tries
-- [ ] `DexMentor-Setup.exe` on a second PC finds the Library without typing an address
-- [ ] Model download completes (and resumes after a dropped connection); first answer appears; model unloads after 10 idle minutes
-- [ ] An answer shows citation balloons; clicking one opens the right page with the passage highlighted; "Open original" opens the file
-- [ ] A question outside the documents is refused with the closest passages listed
-- [ ] Follow-up questions keep context; saved chats survive a restart
+Results of the 23 Nov 2026 pass on one office PC (i7-6700, Windows 10, v1.0.10), run by the agent:
+
+- [~] `DexMentorLibrary-Setup.exe` installs without admin rights (yes, silently); the Library desk opens (yes); firewall prompt: not seen (installed from the command line) and no firewall rule exists afterwards, so other PCs may not reach the Library until someone allows it
+- [~] Add a PDF, a Word file and an Excel file; the register shows pages, passages and tables: yes through the upload API the desk uses; drag and drop itself not tried
+- [x] Link a folder with sub-folders; files appear; nothing in the folder is changed (UNC share, hashes and timestamps compared)
+- [ ] Starter pack: connect, documents appear under "Starter pack", "Check for new documents" works, disconnect removes them (waiting for the access key)
+- [x] Scanned document: progress shows "reading scanned page n of N"; passages readable, but words often run together (see weaknesses); v1.0.10 lost lines, fixed here
+- [~] Set an admin PIN; wrong PIN locks out after five tries for five minutes: yes; managing from a second PC not tried
+- [ ] `DexMentor-Setup.exe` on a second PC finds the Library without typing an address (one PC only: found it at its LAN address from a dead address in 5 s)
+- [~] Model download completes and resumes after the app is killed: yes; first answer appears: yes; unload after 10 idle minutes: not checked
+- [~] An answer shows citation balloons; clicking one opens the right page with the passages highlighted: yes; "Open original" not clicked
+- [x] A question outside the documents is refused with the closest passages listed ("pig launcher", 1 s)
+- [~] Follow-up questions keep context: yes in the 30-question run (two follow-ups); saved chats survive a restart: not checked
 - [ ] Reboot the server PC: the Library starts by itself
 - [ ] Upgrade: install a newer release over the old one; documents and index are kept
 - [ ] Uninstall both programs cleanly

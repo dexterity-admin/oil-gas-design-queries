@@ -300,7 +300,12 @@ def _readable(text):
         clean = sum(ch.isalnum() or ch in ".,;:()-/%'\"&" for ch in body) / len(body)
         words = re.findall(r"[A-Za-z]{3,}", ln)
         real = [w for w in words if re.search(r"[aeiouyAEIOUY]", w) and not re.search(r"[a-z][A-Z]", w)]
-        if re.fullmatch(r"[\d.,\s-]+", ln) or (clean >= 0.85 and len(real) >= max(1, 0.6 * len(words))):
+        # A table row read off a scan ("Up to 15 24 8") has numbers and only short words. Dropping it
+        # while keeping its neighbour ("Above 15 48 16") leaves a table that looks complete and gives the
+        # wrong row's value, so such a line is kept when every piece is a plain number or a plain word.
+        row = re.search(r"\d", ln) and all(re.fullmatch(r"[\d.,/%()-]+|[A-Za-z][a-z]*\.?|[\d.]+(?:to|and|or)[\d.]+", t)
+                                           for t in ln.split())  # the reader glues "3 to 8" into "3to8"
+        if re.fullmatch(r"[\d.,\s-]+", ln) or row or (clean >= 0.85 and len(real) >= max(1, 0.6 * len(words))):
             keep.append(ln)
     return "\n".join(keep)
 

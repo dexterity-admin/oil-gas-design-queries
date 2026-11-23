@@ -82,13 +82,17 @@ for name, msgs, style, musts, nots, kind in TESTS:
             note = " | english: " + body.replace("\n", " ")[:400]; body = ta
         else:
             note = " | TANGLISH REJECTED BY CHECK (english shown instead): " + ta.replace("\n", " ")[:400]
-    invented = chat.verify(body, prep.get("grounding", ""))["unverified"] if prep["sources"] else []
+    chk = chat.verify(body, prep.get("grounding", "")) if prep["sources"] else {"unverified": [], "other_row": []}
+    invented, other = chk["unverified"], chk["other_row"]
     wrong = [n for n in nots if re.search(n, body, re.I)]
     ok = all(re.search(m, body, re.I) for m in musts) and not wrong and not invented
-    rows.append((name, kind, ok, bool(invented), bool(wrong))); secs.append(total)
-    print("\n=== [%s] %s (%s) | ok=%s invented=%s wrong_value=%s | %.1fs%s%s\nQ: %s\nA: %s" % (
-        LABEL, name, kind, ok, invented or "-", wrong or "-", total, (" | search query: " + query) if query else "", note, msgs[-1][1], body), flush=True)
+    rows.append((name, kind, ok, bool(invented), bool(wrong), bool(other))); secs.append(total)
+    print("\n=== [%s] %s (%s) | ok=%s invented=%s wrong_value=%s other_row_flag=%s | %.1fs%s%s\nQ: %s\nA: %s" % (
+        LABEL, name, kind, ok, invented or "-", wrong or "-", other or "-", total, (" | search query: " + query) if query else "",
+        note, msgs[-1][1], body), flush=True)
 
-print("\nRESULT|%s|correct %d/%d|answers with a number not in the sources %d|answers with a wrong value %d|avg %.1fs|max %.1fs|failed: %s" % (
-    LABEL, sum(r[2] for r in rows), len(rows), sum(r[3] for r in rows), sum(r[4] for r in rows), sum(secs) / len(secs), max(secs),
-    ", ".join(r[0] for r in rows if not r[2]) or "none"))
+# "flagged as another row" counts red flags the app would show; on a correct answer that is a false alarm.
+print("\nRESULT|%s|correct %d/%d|answers with a number not in the sources %d|answers with a wrong value %d|avg %.1fs|max %.1fs|failed: %s"
+      "|flagged as another row %d (of them correct %d)" % (
+          LABEL, sum(r[2] for r in rows), len(rows), sum(r[3] for r in rows), sum(r[4] for r in rows), sum(secs) / len(secs), max(secs),
+          ", ".join(r[0] for r in rows if not r[2]) or "none", sum(r[5] for r in rows), sum(r[5] and r[2] for r in rows)))

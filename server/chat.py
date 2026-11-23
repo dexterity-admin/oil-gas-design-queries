@@ -189,7 +189,9 @@ async def reword_tanglish(english):
 
 def verify(answer, grounding_text):
     """Numbers in the answer that are not in the sources: the app flags these instead of trusting them."""
-    return {"unverified": grounding.unverified_numbers(grounding.tidy(_clean(answer)), grounding_text)}
+    text = grounding.tidy(_clean(answer))
+    return {"unverified": grounding.unverified_numbers(text, grounding_text),
+            "other_row": grounding.other_row_numbers(text, grounding_text)}
 
 
 async def answer(messages, style="english"):

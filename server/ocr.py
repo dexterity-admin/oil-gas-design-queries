@@ -13,6 +13,7 @@ from . import config
 
 _engine, _lock = None, threading.Lock()
 DPI = 200
+DET_SIDE = 1600  # shorter side of the picture the line finder sees (RapidOCR 1.4: det_limit_side_len)
 
 
 def available():
@@ -29,7 +30,9 @@ def _get():
     global _engine
     if _engine is None:
         from rapidocr_onnxruntime import RapidOCR
-        _engine = RapidOCR()
+        # By default the line finder works on a page shrunk to about 90 dpi and silently misses whole
+        # lines of ordinary 10 pt print. At 1600 px it found every line of the test pages for +0.3 s a page.
+        _engine = RapidOCR(det_limit_side_len=DET_SIDE)
     return _engine
 
 
