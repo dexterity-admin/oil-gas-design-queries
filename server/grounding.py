@@ -364,7 +364,10 @@ def other_row_numbers(answer, source_text):
     and the model answered 48 h with a green stamp. A value that sits in a ruled-out row and not in the
     matched row is flagged; a false flag costs a look at the page, a missed one is a wrong number."""
     matched, ruled_out, mode = set(), set(), None
-    for ln in source_text.splitlines():
+    lines = source_text.rstrip().splitlines()
+    if lines and not lines[-1].startswith("- "):  # the grounding text ends with the question: its numbers are the user's
+        matched |= {v for v, _, _ in _numbers(lines[-1])}
+    for ln in lines:
         s = ln.strip()
         if s == "Row that matches the question:":
             mode = "match"

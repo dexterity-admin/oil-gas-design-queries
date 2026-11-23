@@ -103,6 +103,9 @@ def test_value_from_a_ruled_out_row_is_flagged():
     assert flag("Hold it for 24 hours with 8 settlement points [1].") == []
     assert flag("Tanks up to 15 m are held for 24 hours [1].") == []      # 15 is in the matched row too
     assert flag("Use 16 settlement points.") == ["16"]
+    q2 = "Maximum span for 8 inch stainless steel pipe thinner than schedule 10S?"   # 10 is the user's, not row "10 and above"
+    src2 = g.table_text(INSUL, "mineral wool for 8 inch pipe at 150 C")[0] + "\n" + q2
+    assert g.other_row_numbers("Below schedule 10S use 80 percent [1].", src2) == []
     assert g.other_row_numbers("48 hours", "Table, one row per line:\n- Tank diameter (m): Above 15; Hold time (h): 48") == []
 
 
