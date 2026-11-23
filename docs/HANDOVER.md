@@ -103,11 +103,9 @@ These are the reasons this handover exists. Each one needs a machine that can do
 
 1. **Installers run by a person.** Installed by the agent from the command line on a real PC (see above). Still unknown: SmartScreen behaviour for a browser download, whether the firewall prompt appears and what a non-admin user can answer (no firewall rule existed after the install), autostart after a reboot (it is a Startup-folder shortcut, not a scheduled task), uninstall, upgrade over an older version.
 2. **Two real PCs on one network.** Discovery has only been tested on a single machine (on the real office network it found the Library at its LAN address in 5 s from a dead address).
-3. **Worded answers on the two real documents.** No model has answered questions about the pipe guide or the textbook. Only retrieval and matching were checked.
-4. **Meaning-based search on the real documents.** Embeddings could not be downloaded where the documents were tested; results there are keyword-only.
-5. **The 30-question evaluation on GitHub after this change.** Measured locally on the real PC at 29 of 30 (above); the `[eval]` matrix on GitHub has not been re-run.
-6. **Starter pack against real GitHub** with a real fine-grained token and the real private repository.
-7. **Office model path end to end** (Ollama on a second PC, Tanglish judged by a Tamil speaker).
+3. **The book's prose answers against the page images**, and the book as read by the fixed reader. Worded answers on both real documents, with meaning-based search on, are now measured (see the two result sections below), but seven prose answers were judged only against the reader's text.
+4. **The 30-question evaluation on GitHub after this change.** Measured locally on the real PC at 29 of 30 (above); the `[eval]` matrix on GitHub has not been re-run.
+5. **Office model path end to end** (Ollama on a second PC, Tanglish judged by a Tamil speaker).
 
 ## Known weaknesses
 
@@ -116,7 +114,7 @@ These are the reasons this handover exists. Each one needs a machine that can do
 - **Scan reader fixes in this change.** (a) RapidOCR shrank each page to about 90 dpi before looking for lines and silently missed whole lines of 10 pt print; `server/ocr.py` now sets `det_limit_side_len=1600` (+0.3 s a page). (b) `_readable` in `server/ingest.py` dropped scanned table rows made of numbers and short words ("Up to 15 24 8") while keeping their neighbours ("Above 15 48 16"), so a table looked complete with a row missing; such rows are now kept. `requirements.txt` now requires RapidOCR 1.4.x so running from source reads pages the same way as the installed program (1.4.x needs Python 3.12 or older).
 - **Wrong row with a green stamp (found on the real PC, guarded in this change).** Asked "How long is the hydrotest hold for a 10 m diameter tank?", the installed v1.0.10 answered **48 hours** (right: 24) with "numbers found in sources". The matcher had given the right row; a scanned copy of the same standard, read by v1.0.10 with the "Up to 15" row missing, was also among the sources and the model took 48 from it. Besides fixing the scan reader, `grounding.other_row_numbers` now flags any number the answer takes from a row the matcher ruled out, and the app shows "CHECK THE ROW" in red instead of the green stamp. It cannot help when the matcher picked no row. Numbers the user typed are never flagged. Known false alarm (1 of 30 in the evaluation): the follow-up "and for smaller ones?" is rewritten to a query that still says "above 15 m", the matcher picks the Above 15 row, and the correct 24 h answer gets the red flag.
 - **Wrong column.** The matcher picks rows, not columns. On the real pipe guide the model twice took the value from the wrong column (stainless instead of carbon steel; the wrong material in a sideways table) and nothing flagged it. Next deterministic step: when the question names exactly one column header ("carbon steel", "-29 C"), say "Value that answers the question" for that column only, as is already done for temperature-range headers.
-- **Page view blocked while a big PDF is read (fixed in this change).** Indexing held the PyMuPDF lock for a whole document, so every citation page image in the app hung for the hour the scanned book takes. `parse_pdf` now lets go of the lock between pages.
+- **Page view blocked while a big PDF is read (fixed in this change).** Indexing held the PyMuPDF lock for a whole document, so every citation page image in the app hung for the 45 minutes the scanned book takes. `parse_pdf` now lets go of the lock between pages; on the real PC a page image now comes back in 0.6 s while the book is being read.
 - **GPU check leaves no reason.** On the GT 710 the GPU test fails (`ErrorDeviceLost`) and `settings.json` records `gpu_s: null` with no note, so nobody can tell later why the CPU was chosen.
 - **Data folders follow `%LOCALAPPDATA%`.** Both programs keep the model (1.1 GB), index and page cache under the user's profile on C:. They can be moved only with environment variables (`DATA_DIR`, `LIBRARY_DIR` for the Library, `DEXMENTOR_HOME` for the engineer app); the installers do not ask.
 - **Admin PIN also applies on the server PC.** Once a PIN is set, changes made on the server PC itself need it too (the comment in `server/config.py` says the server PC is always allowed).
@@ -133,8 +131,8 @@ These are the reasons this handover exists. Each one needs a machine that can do
 ## Next work, in order
 
 1. Finish the checklist below: the items still open need a person at the PC (firewall prompt, SmartScreen, reboot), a second PC, or an upgrade.
-2. Connect the Library to the private starter pack with a real key. Confirm both documents index, including the scanned book through the built-in reader on Windows (expect about 40 minutes for 445 pages on an i7-6700).
-3. Ask real questions with the real PC model and judge the answers against the pages. Start from the question lists in this file.
+2. Check the book's seven prose answers against the page images, and compare the book read by the fixed reader with the v1.0.10 read.
+3. Same-sentence number check for prose sources (see the book results), then column selection for tables (see weaknesses).
 4. Re-run the 30-question evaluation with `[eval]` on GitHub and compare with 29 of 30.
 5. Then the weaknesses above: words run together in scanned text, then numbers in scanned exhibits.
 
@@ -145,7 +143,7 @@ Results of the 23 Nov 2026 pass on one office PC (i7-6700, Windows 10, v1.0.10),
 - [~] `DexMentorLibrary-Setup.exe` installs without admin rights (yes, silently); the Library desk opens (yes); firewall prompt: not seen (installed from the command line) and no firewall rule exists afterwards, so other PCs may not reach the Library until someone allows it
 - [~] Add a PDF, a Word file and an Excel file; the register shows pages, passages and tables: yes through the upload API the desk uses; drag and drop itself not tried
 - [x] Link a folder with sub-folders; files appear; nothing in the folder is changed (UNC share, hashes and timestamps compared)
-- [ ] Starter pack: connect, documents appear under "Starter pack", "Check for new documents" works, disconnect removes them (waiting for the access key)
+- [~] Starter pack: connect with a real fine-grained read-only key against real GitHub: yes, both documents downloaded and indexed under "Starter pack"; re-fetch after removing a document: yes; disconnect not tried
 - [x] Scanned document: progress shows "reading scanned page n of N"; passages readable, but words often run together (see weaknesses); v1.0.10 lost lines, fixed here
 - [~] Set an admin PIN; wrong PIN locks out after five tries for five minutes: yes; managing from a second PC not tried
 - [ ] `DexMentor-Setup.exe` on a second PC finds the Library without typing an address (one PC only: found it at its LAN address from a dead address in 5 s)
@@ -171,6 +169,26 @@ Installed v1.0.10, Qwen 1.5B on the i7-6700, starter pack downloaded from the re
 With this change the two wrong numbers (88.9 and 60.3) get the red "CHECK THE ROW" flag: re-checked against the real grounding text, and the 7 right numeric answers stay unflagged. The other three wrong answers pick the wrong **column** (material, carbon steel vs stainless) or answer a question the guide does not cover; no check catches them yet. The Sch 40 one is partly the document's own error: its wall-tolerance table has the first row's NPS and DN cells swapped (NPS "6 to 65", DN "⅛ to 2½"), so NPS 6 matches that row.
 
 Meaning-based search was on (embeddings downloaded) for all of these.
+
+### Real-model answers on the scanned book (23 Nov 2026, v1.0.10 reader)
+
+Indexing the 445-page book through the starter pack took **45 minutes** on the i7-6700 (387 pages read by the built-in reader, front matter skipped, 647 passages, all embedded). 14 questions; the six with a number or a location were judged against the page image:
+
+| Question | Answer | Against the page |
+| --- | --- | --- |
+| Minimum headroom over a walkway | "2.100 mm", then one source line repeated 20+ times | Value matches the platform headroom in the exhibit (2,100 mm), but written like 2.1 mm; the run-on repetition is a model failure |
+| Minimum headroom under a pipe rack | 15 inches | **Wrong**: not on the cited page (a drawing page) |
+| Access way width | 1.2 m (3 ft) | **Wrong**: not on the cited page; 1.2 m is not 3 ft |
+| Where the control room goes | "next to equipment that needs servicing" | **Wrong**: the book says control houses sit at the unit edge by a plant road, 50 ft from the equipment (page 56), which search did not return |
+| Usual pipe rack bent spacing | 16 ft (4,900 mm) | Value is on the page as an example; red-flagged because the reader misread "16" in the source text |
+| Tube bundle removal clearance | 12 inches | **Wrong**: not on the cited page |
+| Corrosion allowance | refused by code | Right |
+
+The seven prose answers (plot plan types, pipe stress, NPSH, furnaces, designer role, pump arrangement, P&ID) read sensibly against the reader's text but were **not** checked against page images. Three wrong numbers carried the green stamp: each number exists somewhere in the four sources, just not about the thing asked. The row check cannot help (no tables are trusted on scanned pages). Next deterministic idea: a number only counts as found when it sits in the same sentence as the asked-about words.
+
+### Upgrade test (23 Nov 2026)
+
+Installing v1.0.12 over a running v1.0.10 **aborted** (exit code 5): the Library and the engineer launcher run without a window, so Windows' Restart Manager cannot close them ("Setup was unable to automatically close all applications"). After stopping them by hand the upgrade succeeded and kept the documents, the index, the starter-pack key and the downloaded model. Both installers now stop the running program before copying files (and the engineer installer stops its own `llama-server`), and a silent upgrade starts the program again.
 
 ### Questions used so far
 

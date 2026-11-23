@@ -28,7 +28,7 @@ DexMentor answers engineers' questions from **your company's own standards, desi
 | **Cited answers** | Each number in an answer carries a balloon. One click opens the original page with the passage highlighted. |
 | **Reads the table, not just the words** | Code finds the row and column that match the question and does percentage sums itself. The model only words the answer. |
 | **Reads real-world PDFs** | Tables drawn by Word, merged header cells, tables laid on their side and sizes written as fractions (1½", ¾") are all read and matched. "OD" finds "outside diameter" and the other way round. |
-| **Reads scanned documents** | A 14 MB reader built into the Library reads scanned pages on the CPU, with nothing extra to install: about 6 seconds a page on an Intel i7-6700 office PC, so a 400-page scanned book takes about 40 minutes once. |
+| **Reads scanned documents** | A 14 MB reader built into the Library reads scanned pages on the CPU, with nothing extra to install: about 6 seconds a page on an Intel i7-6700 office PC, so the 445-page scanned reference book took 45 minutes once. While a book is being read, answers and page views keep working. |
 | **Starter pack, kept private** | Keep the company's reference documents in a private GitHub repository. Connect the Library to it once (repository name and a read-only key) and it downloads, indexes and keeps them up to date. Nothing from the pack is in the public installer. |
 | **Says when it does not know** | If the library never mentions what is asked, DexMentor refuses and shows the closest passages instead of guessing. |
 | **Numbers are checked** | Every number in an answer is checked against the sources. Anything not found is flagged in red. |

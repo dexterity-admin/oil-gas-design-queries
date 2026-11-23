@@ -30,3 +30,15 @@ Name: "{userdesktop}\DexMentor Library"; Filename: "{app}\DexMentorLibrary.exe";
 Name: "{userstartup}\DexMentor Library"; Filename: "{app}\DexMentorLibrary.exe"; Parameters: "--no-window"; Tasks: autostart
 [Run]
 Filename: "{app}\DexMentorLibrary.exe"; Description: "Start DexMentor Library and open the Library desk"; Flags: nowait postinstall skipifsilent
+; A silent update (pushed by IT, or run from a script) must not leave the office without its Library.
+Filename: "{app}\DexMentorLibrary.exe"; Parameters: "--no-window"; Flags: nowait; Check: WizardSilent
+[Code]
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var Code: Integer;
+begin
+  { The Library runs without a window, so Windows cannot ask it to close and an update over a running
+    Library aborted ("Setup was unable to automatically close all applications"). Stop it first. }
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM DexMentorLibrary.exe', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Sleep(1000);
+  Result := '';
+end;
