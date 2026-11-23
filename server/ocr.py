@@ -32,8 +32,40 @@ def _get():
         from rapidocr_onnxruntime import RapidOCR
         # By default the line finder works on a page shrunk to about 90 dpi and silently misses whole
         # lines of ordinary 10 pt print. At 1600 px it found every line of the test pages for +0.3 s a page.
-        _engine = RapidOCR(det_limit_side_len=DET_SIDE)
+        # One thread: the Library runs under a hard CPU cap, where more threads only queue (and each
+        # thread's work buffers cost RAM).
+        _engine = RapidOCR(det_limit_side_len=DET_SIDE, intra_op_num_threads=config.WORK_THREADS,
+                           inter_op_num_threads=1)
     return _engine
+
+
+class Reader:
+    """Reads the scanned pages of one document in a separate worker process.
+
+    The reader needs about 1 GB while it works and Python never hands that back to Windows, so the Library
+    stayed at 1.25 GB after reading a book (237 MB without). A worker returns every byte when it closes,
+    and a worker that runs out of memory costs one page, not the Library. It runs under the same CPU cap.
+    """
+
+    def __init__(self, path):
+        self.path, self.pool = str(path), None
+
+    def read(self, pno):
+        if self.pool is None:
+            import multiprocessing
+            self.pool = multiprocessing.get_context("spawn").Pool(1)
+        return self.pool.apply(_read_in_worker, (self.path, pno))
+
+    def close(self):
+        if self.pool is not None:
+            self.pool.close()
+            self.pool.join()
+            self.pool = None
+
+
+def _read_in_worker(path, pno):
+    with pymupdf.open(path) as doc:
+        return read_page(doc[pno - 1])
 
 
 def recognise(page):

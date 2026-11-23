@@ -186,6 +186,40 @@ Indexing the 445-page book through the starter pack took **45 minutes** on the i
 
 The seven prose answers (plot plan types, pipe stress, NPSH, furnaces, designer role, pump arrangement, P&ID) read sensibly against the reader's text but were **not** checked against page images. Three wrong numbers carried the green stamp: each number exists somewhere in the four sources, just not about the thing asked. The row check cannot help (no tables are trusted on scanned pages). Next deterministic idea: a number only counts as found when it sits in the same sentence as the asked-about words.
 
+### CPU and memory limits (owner's rule, 23 Nov 2026)
+
+The owner's limits, measured as Task Manager shows them (share of the whole PC, one-second samples):
+the **Library never above 15 %**; the **engineer app (with its model) never above 10 %, except up to 25 % while
+an answer is being written**; RAM as low as possible.
+
+- `desktop/winlimits.py` puts each program and the processes it starts into a Windows job object with a **hard
+  CPU cap** enforced by the kernel, and lowers its priority. The cap overshoots by 2 to 4 points in single
+  seconds, so the caps sit below the limits: Library 10 % (worst second measured 12.2 %), engineer app 6 % idle
+  (8.1 %) and 20 % while the model loads or writes (23.8 %). `tests/test_winlimits.py` pins every core and checks
+  the worst second for each, and that the answer boost goes back down. Environment variables:
+  `DEXMENTOR_CPU_LIMIT`, `DEXMENTOR_ANSWER_CPU_LIMIT` (0 = no cap).
+- The app windows (Edge/Chrome) are started outside the cap so the screen never freezes behind the model.
+- Scan reader and search model use one thread (`WORK_THREADS`). Scanned pages are read in a **worker process per
+  document** (`ocr.Reader`): the reader needs about 1 GB while it works and never gave it back, so the Library sat at
+  1.25 GB after reading scans. Passages are embedded 4 at a time (batch 256 kept +816 MB for good).
+- The model runner reads weights from the mapped model file (`--no-repack`), answers one question at a time and
+  keeps no prompt cache in RAM (`-np 1 -cram 0`), with smaller batches (`-b/-ub 256`).
+
+Measured on the i7-6700 (8 threads):
+
+| | Before | After |
+| --- | --- | --- |
+| Library CPU while reading scans | 50 %+ | worst second 12.2 %, average 9.6 % |
+| Library RAM idle after reading scans | 1,248 MB (1,637 private) | 412 MB (623 private); 237 MB at a fresh start |
+| Engineer app + model CPU while answering | worst second 49 % | worst second 22.5 %, average 18 % |
+| Model runner RAM (private) | 1,005 MB | 406 MB (the rest of its working set is the mapped model file) |
+| Answer time (3 test questions) | about 14 s | 16 to 27 s (50 to 70 s with a flat 6 % cap) |
+| Reading scanned pages | about 6 s a page | about 11 s a page (the 445-page book: about 1.5 h instead of 45 min) |
+
+This PC has **no page file**: the commit limit is the 24 GB of RAM and other programs had committed about 22.7 GB,
+so allocations failed now and then ("bad allocation", "paging file is too small"). A worker that fails costs one
+page, which is then listed as unreadable. Setting a page file is the owner's call.
+
 ### Upgrade test (23 Nov 2026)
 
 Installing v1.0.12 over a running v1.0.10 **aborted** (exit code 5): the Library and the engineer launcher run without a window, so Windows' Restart Manager cannot close them ("Setup was unable to automatically close all applications"). After stopping them by hand the upgrade succeeded and kept the documents, the index, the starter-pack key and the downloaded model. Both installers now stop the running program before copying files (and the engineer installer stops its own `llama-server`), and a silent upgrade starts the program again.

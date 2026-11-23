@@ -45,6 +45,9 @@ TOP_K = int(os.getenv("TOP_K", "6"))
 LOCAL_TOP_K = int(os.getenv("LOCAL_TOP_K", "4"))
 LOCAL_SOURCE_CHARS = int(os.getenv("LOCAL_SOURCE_CHARS", "1400"))
 OCR = os.getenv("OCR", "auto").lower()  # auto | off: the built-in reader for scanned pages
+# Threads for the scan reader and the search model. The packaged Library runs under a hard CPU cap
+# (desktop/library_entry.py), where one thread does the same work with less RAM.
+WORK_THREADS = int(os.getenv("WORK_THREADS", "1"))
 SUPPORTED = {".pdf", ".docx", ".xlsx", ".xlsm", ".pptx"}
 # Documents that ship with the program. They are copied into the Library the first time it starts,
 # so engineers get answers before the librarian has added anything.

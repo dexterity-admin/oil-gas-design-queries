@@ -29,12 +29,21 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
+import winlimits
+
 HERE = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 DATA = Path(os.getenv("DEXMENTOR_HOME") or Path(os.getenv("LOCALAPPDATA") or Path.home() / ".local/share") / "DexMentor")
 PORT = int(os.getenv("DEXMENTOR_PORT", "8720"))
 LLM_PORT = int(os.getenv("DEXMENTOR_LLM_PORT", "8719"))
 MANIFEST = json.loads(Path(os.getenv("DEXMENTOR_MANIFEST") or HERE / "models.json").read_text())
 SETTINGS_FILE = DATA / "settings.json"
+# Hard ceilings for this program and the model it runs, in percent of the whole PC (0 = no cap), set by the
+# owner: under 10 % at all times, under 25 % while an answer is being written. Measured worst single
+# seconds: cap 6 -> 8.1 %, cap 20 -> 23.8 %.
+CPU_LIMIT = winlimits.limit_from_env("DEXMENTOR_CPU_LIMIT", 6)
+ANSWER_LIMIT = winlimits.limit_from_env("DEXMENTOR_ANSWER_CPU_LIMIT", 20)
+BOOST = winlimits.Boost(idle=CPU_LIMIT, busy=ANSWER_LIMIT)
+BATCH = int(os.getenv("DEXMENTOR_BATCH", "256"))
 
 settings = {"server_url": os.getenv("DEXMENTOR_SERVER", "http://127.0.0.1:8700")}
 state = {"state": "missing", "done": 0, "total": 0, "step": "", "error": "",
@@ -223,10 +232,17 @@ def _unzip(url, folder, step, sha256=""):
 
 def _start(kind):
     n = os.cpu_count() or 4
-    threads = n if n <= 4 else n // 2  # small CPUs have no spare threads to leave idle; big ones keep half free
+    if CPU_LIMIT:  # under the hard cap extra threads only queue for the same small share: use what the share is worth
+        threads = max(1, int(n * max(CPU_LIMIT, ANSWER_LIMIT) / 100 + 0.5))
+    else:
+        threads = n if n <= 4 else n // 2  # small CPUs have no spare threads to leave idle; big ones keep half free
     flags = 0x08000000 if os.name == "nt" else 0  # no console window on Windows
     cmd = runtime_cmd(kind) + ["-m", str(model_path()), "-c", str(MANIFEST["model"]["context"]),
-                               "--host", "127.0.0.1", "--port", str(LLM_PORT), "-t", str(threads)]
+                               "--host", "127.0.0.1", "--port", str(LLM_PORT), "-t", str(threads),
+                               "-b", str(BATCH), "-ub", str(BATCH),  # smaller batches: smaller work buffers in RAM
+                               # Read the weights from the mapped model file instead of a private repacked copy
+                               # (measured: 983 -> 383 MB private), one answer at a time, no prompt cache in RAM.
+                               "--no-repack", "-np", "1", "-cram", "0"]
     if kind == "gpu":
         cmd += ["-ngl", "99"]
     return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
@@ -260,6 +276,11 @@ def _bench(kind):
 
 
 def tune():
+    with BOOST:  # the timing must see the same ceiling answers get
+        _tune()
+
+
+def _tune():
     """Old graphics cards are sometimes slower than the processor, so measure instead of guessing."""
     gpu = detect_gpu()
     accel = {"mode": "cpu", "gpu": gpu}
@@ -460,11 +481,12 @@ class Handler(BaseHTTPRequestHandler):
             save_settings()
             return self._json({"ok": True})
         if self.path.startswith("/llm/"):
-            try:
-                ensure_model()
-            except RuntimeError as e:
-                return self._json({"error": str(e)}, 503)
-            return self._proxy("http://127.0.0.1:%d" % LLM_PORT, self.path[4:], body)
+            with BOOST:  # the higher ceiling only while the model loads and writes; back to the idle one after
+                try:
+                    ensure_model()
+                except RuntimeError as e:
+                    return self._json({"error": str(e)}, 503)
+                return self._proxy("http://127.0.0.1:%d" % LLM_PORT, self.path[4:], body)
         return self._proxy(settings["server_url"], self.path, body)
 
     do_GET = do_POST = do_PUT = do_DELETE = handle_any
@@ -476,12 +498,13 @@ def open_window(url):
                 r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
                 r"C:\Program Files\Google\Chrome\Application\chrome.exe"):
         if os.path.exists(exe):
-            subprocess.Popen([exe, "--app=" + url, "--window-size=1280,820"])
+            winlimits.popen_outside([exe, "--app=" + url, "--window-size=1280,820"])
             return
     webbrowser.open(url)
 
 
 def main():
+    winlimits.cap(CPU_LIMIT)  # before anything else, so the model runner it starts is capped too
     load_settings()
     refresh_state()
     threading.Thread(target=auto_connect, daemon=True).start()
