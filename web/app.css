@@ -11,6 +11,7 @@
   --bg:#071a1d; --panel:#0c2529; --raise:#113136; --ink:#eaf5f7; --mute:#7fa5ab; --line:#1d4a51; --grid:rgba(79,195,207,.06);
   --amber:#f9af46; --amber-ink:#1c1200; --amber-soft:rgba(249,175,70,.13); --cyan:#4fc3cf; --ok:#3ddc84; --bad:#ff6b6b; --paper:#fff;
   --display:"Barlow SC","Arial Narrow",sans-serif; --body:"Plex",system-ui,"Segoe UI",sans-serif; --mono:"Plex Mono",ui-monospace,Consolas,monospace;
+  --ease:cubic-bezier(.2,.7,.2,1); --flow:cubic-bezier(.65,0,.35,1); /* Dexterity "Line of flow": entrances, flow */
 }
 :root[data-theme="light"]{
   --bg:#eaf5f7; --panel:#f7fbfb; --raise:#ffffff; --ink:#143f45; --mute:#456a70; --line:#cfe4e8; --grid:rgba(44,140,152,.09);
@@ -57,7 +58,13 @@ main{flex:1;display:flex;min-height:0}
 .chat{display:flex;align-items:center;border-left:2px solid transparent;font-size:13.5px}
 .chat:hover{background:var(--raise)}.chat.active{border-left-color:var(--amber);background:var(--amber-soft)}
 .chat .t{flex:1;min-width:0;text-align:left;padding:7px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.chat .x{color:var(--mute);padding:4px 8px;opacity:0}.chat:hover .x,.chat .x:focus-visible{opacity:1}.chat .x:hover{color:var(--bad)}
+.chat .x,.chat .e{color:var(--mute);padding:4px 8px;opacity:0;transition:opacity .15s,color .15s}
+.chat:hover .x,.chat .x:focus-visible,.chat:hover .e,.chat .e:focus-visible{opacity:1}.chat .x:hover{color:var(--bad)}.chat .e:hover{color:var(--amber)}
+.chat .e{padding:4px 2px}.chat .e svg{width:14px;height:14px;display:block}
+.chat{transition:background-color .15s}.chat .t{transition:transform .2s var(--ease)}.chat:hover .t{transform:translateX(2px)}
+.chat .rename{flex:1;min-width:0;margin:3px 4px;padding:4px 6px;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--amber);border-radius:3px;outline:none}
+.chat.editing .e,.chat.editing .x{display:none}
+@media (hover:none){.chat .x,.chat .e{opacity:1}}
 .unit{border:1px solid var(--line);border-radius:6px;padding:10px;font-size:12px;color:var(--mute);background:var(--bg)}
 .unit b{display:flex;align-items:center;gap:7px;color:var(--ink);font:700 12px/1.2 var(--display);letter-spacing:.1em;text-transform:uppercase;margin-bottom:5px}
 .unit button{margin-top:9px;width:100%}
@@ -70,15 +77,12 @@ main{flex:1;display:flex;min-height:0}
 .turn{max-width:800px;margin:0 auto;display:grid;grid-template-columns:54px minmax(0,1fr);position:relative;padding-bottom:26px}
 .turn:before{content:"";position:absolute;left:19px;top:30px;bottom:-2px;border-left:2px solid var(--line)}
 .turn:last-child:before{display:none}
-.turn.stale{opacity:.55}
 .node{width:40px;height:40px;border:2px solid var(--amber);border-radius:50%;display:grid;place-items:center;background:var(--bg);
   font:600 11px/1 var(--mono);color:var(--amber);position:relative;z-index:1}
 .turn.fu .node{width:32px;height:32px;margin:4px;border-color:var(--cyan);color:var(--cyan)}
 .q{font:500 20px/1.3 var(--display);letter-spacing:.01em;padding-top:7px;overflow-wrap:anywhere}
 .fuTag{font:400 11.5px/1.4 var(--mono);color:var(--mute);margin-top:4px}.fuTag b{color:var(--cyan);font-weight:600;letter-spacing:.06em}
 .a{grid-column:2;margin-top:12px;min-width:0}
-.turn:last-child .a{animation:rise .25s ease-out}
-@keyframes rise{from{opacity:0;transform:translateY(6px)}}
 .card{background:var(--raise);border:1px solid var(--line);border-left:3px solid var(--amber);border-radius:2px 8px 8px 2px;padding:12px 16px}
 .card p{margin:.4em 0}.card ul,.card ol{margin:.4em 0;padding-left:1.3em}.card h4{margin:.8em 0 .2em;font:700 14px var(--display);letter-spacing:.08em;text-transform:uppercase}
 .card code{font-family:var(--mono);font-size:.9em;background:var(--bg);padding:1px 5px;border-radius:3px}
@@ -89,7 +93,7 @@ th,td{border:1px solid var(--line);padding:5px 10px;text-align:left;vertical-ali
 th{font:700 11px/1.3 var(--display);letter-spacing:.1em;text-transform:uppercase;color:var(--mute);background:var(--bg)}
 /* citation = drawing balloon */
 .cite{display:inline-grid;place-items:center;width:20px;height:20px;border:1.5px solid var(--amber);border-radius:50%;color:var(--amber);
-  font:600 10.5px/1 var(--mono);margin:0 2px;vertical-align:1px;transition:.12s}
+  font:600 10.5px/1 var(--mono);margin:0 2px;vertical-align:1px;transition:transform .15s var(--ease),background-color .15s,color .15s}
 .cite:hover,.cite.on{background:var(--amber);color:var(--amber-ink);transform:scale(1.15)}
 /* references = transmittal slips */
 .refs{display:flex;gap:8px;overflow-x:auto;padding:2px 0 10px}
@@ -107,11 +111,12 @@ th{font:700 11px/1.3 var(--display);letter-spacing:.1em;text-transform:uppercase
 .pipe .st{display:flex;flex-direction:column;align-items:center;gap:6px;font:700 10px/1 var(--display);letter-spacing:.14em;color:var(--mute);text-transform:uppercase}
 .pipe .st i{width:14px;height:14px;border:2px solid var(--line);transform:rotate(45deg);background:var(--bg)}
 .pipe .st.done{color:var(--ink)}.pipe .st.done i{background:var(--amber);border-color:var(--amber)}
-.pipe .st.now{color:var(--amber)}.pipe .st.now i{border-color:var(--amber);animation:blink .9s infinite}
-.pipe .ln{flex:1;height:2px;min-width:26px;margin:0 6px 16px;background:var(--line)}
+.pipe .st.now{color:var(--amber)}.pipe .st.now i{border-color:var(--amber);animation:dx-breathe 1.6s ease-in-out infinite}
+.pipe .ln{flex:1;height:2px;min-width:26px;margin:0 6px 16px;background:var(--line);position:relative;overflow:hidden}
 .pipe .ln.done{background:var(--amber)}
-.pipe .ln.now{background:repeating-linear-gradient(90deg,var(--amber) 0 8px,transparent 8px 14px);background-size:14px 2px;animation:flow .5s linear infinite}
-@keyframes flow{to{background-position:14px 0}}
+/* moving data: amber dashes flow along the run (a sliding layer, so only the compositor works) */
+.pipe .ln.now:before{content:"";position:absolute;top:0;bottom:0;left:-14px;right:0;background:repeating-linear-gradient(90deg,var(--amber) 0 8px,transparent 8px 14px);animation:dx-flowx .5s linear infinite}
+@keyframes dx-flowx{to{transform:translateX(14px)}}
 .pipe .clock{font:600 12px var(--mono);color:var(--amber);margin:0 0 16px 12px;min-width:44px}
 .next{display:flex;flex-direction:column;gap:6px;margin-top:12px;align-items:flex-start}
 .next .cap{margin-bottom:2px}
@@ -137,10 +142,11 @@ th{font:700 11px/1.3 var(--display);letter-spacing:.1em;text-transform:uppercase
 #input{flex:1;min-width:0;resize:none;border:0;background:transparent;outline:none;padding:8px 0;max-height:150px;line-height:1.4}
 #send{width:40px;height:36px;border-radius:6px;background:var(--amber);color:var(--amber-ink);display:grid;place-items:center}
 #send:disabled{opacity:.4}#send svg{stroke-width:2.2}
-#gauge{width:74px;text-align:center;font:600 10.5px/1.15 var(--mono);color:var(--mute);letter-spacing:.06em}
-#gauge[hidden]{display:none}#gauge svg{width:62px;height:36px;stroke-width:5}
-#gauge .trk{stroke:var(--line)}#gauge .val{stroke:var(--amber);transition:stroke-dashoffset .4s}
-#gauge button{display:block;width:100%;margin-top:3px;color:var(--cyan);font:inherit;text-decoration:underline}
+#topicBtn{display:flex;align-items:center;gap:6px;height:36px;margin-bottom:6px;padding:0 13px 0 10px;border:1px solid var(--line);border-radius:999px;
+  background:var(--panel);color:var(--mute);font:500 12px/1 var(--display);letter-spacing:.1em;text-transform:uppercase;white-space:nowrap;transition:color .15s,border-color .15s}
+#topicBtn[hidden]{display:none}#topicBtn svg{width:15px;height:15px;transition:transform .3s var(--ease)}
+#topicBtn:hover{color:var(--ink);border-color:var(--cyan)}#topicBtn:hover svg{transform:rotate(90deg)}
+#send svg{transition:transform .2s var(--ease)}#send:not(:disabled):hover svg{transform:translateX(2px)}
 
 /* ---- source sheet ---- */
 #ref{width:clamp(320px,42%,780px);min-width:0;display:flex;flex-direction:column;border-left:1px solid var(--line);background:var(--panel);animation:slide .22s ease-out}
@@ -190,7 +196,7 @@ dialog p{color:var(--mute);font-size:13.5px}
 .psg{border:1px solid var(--line);border-left:3px solid var(--line);background:var(--raise);padding:8px 12px;margin-bottom:8px;font-size:13px}
 .psg.table{border-left-color:var(--amber)}.psg .cap{display:flex;gap:10px;margin-bottom:6px}.psg .cap b{color:var(--amber)}
 .psg p{margin:.3em 0}
-@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media (prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important}}
 @media (max-width:860px){
   .deskBody{flex-direction:column;overflow-y:auto}.deskLeft,.deskRight{flex:none;overflow:visible}.deskRight{border-left:0;border-top:1px solid var(--line)}
   #side{position:fixed;top:0;bottom:0;left:0;z-index:6;width:84vw;max-width:320px;box-shadow:10px 0 40px rgba(0,0,0,.5)}
@@ -204,18 +210,21 @@ dialog p{color:var(--mute);font-size:13.5px}
 
 /* ---- live work log, scan beam and the writing pen ---- */
 .trace{font:400 12px/1.5 var(--mono);color:var(--mute);margin:2px 0 10px;border-left:1px dashed var(--line);padding-left:12px}
-.tl{display:flex;gap:9px;align-items:baseline;animation:rise .2s ease-out}
+.tl{display:flex;gap:9px;align-items:baseline}
 .tl i{flex:0 0 6px;height:6px;transform:rotate(45deg);background:var(--line);position:relative;top:-1px}
 .tl.hit i,.tl.write i{background:var(--amber)}.tl.rw i,.tl.note i{background:var(--cyan)}
 .tl.rw span,.tl.hit span{color:var(--ink)}.tl.note span{font-style:italic}
-.tl.cur span:after{content:"";display:inline-block;width:7px;height:12px;margin-left:4px;background:var(--amber);vertical-align:-2px;animation:blink .8s steps(2) infinite}
+/* "working": a dot travelling along a short line, on the line being worked on (Dexterity mark) */
+.spin{flex:none;align-self:center;display:inline-block;width:22px;height:6px;position:relative;color:var(--amber);
+  background:linear-gradient(currentColor,currentColor) 0 50%/100% 1px no-repeat}
+.spin:before{content:"";position:absolute;top:0;left:0;width:6px;height:6px;border-radius:50%;background:currentColor;animation:dx-dot .9s var(--flow) infinite alternate}
+@keyframes dx-dot{to{transform:translateX(16px)}}
 details.meta summary{cursor:pointer;list-style:none}details.meta summary::-webkit-details-marker{display:none}
 details.meta[open] summary{margin-bottom:8px}details.meta .trace{text-transform:none;letter-spacing:0}
 .pen{display:inline-block;width:9px;height:1.05em;margin-left:3px;vertical-align:-3px;background:var(--amber);
   clip-path:polygon(0 0,100% 0,100% 62%,50% 100%,0 62%);animation:nib .5s ease-in-out infinite alternate}
 @keyframes nib{to{transform:translateY(-2px)}}
-.cite.pop{animation:pop .45s cubic-bezier(.2,1.6,.4,1)}
-@keyframes pop{from{transform:scale(0);background:var(--amber)}}
+.cite.pop{animation:dx-pop .45s var(--ease)}
 .slip.flash{animation:flash .9s ease-out}
 @keyframes flash{from{background:var(--amber);border-color:var(--amber)}}
 .sheet.scanning #refBody{position:relative}
@@ -240,10 +249,8 @@ details.meta[open] summary{margin-bottom:8px}details.meta .trace{text-transform:
 .card.none{border-left-color:var(--mute);border-style:dashed;border-left-style:solid;background:transparent}
 .card.none .cap{margin-bottom:6px}
 .stamp{display:inline-flex;align-items:center;gap:8px;margin-top:10px;padding:5px 12px 5px 8px;border:1.5px solid var(--ok);border-radius:4px;color:var(--ok);
-  transform:rotate(-1.2deg);animation:stampin .22s ease-out;font:400 10.5px/1.2 var(--mono)}
+  transform:rotate(-1.2deg);font:400 10.5px/1.2 var(--mono)}
 .stamp svg{width:16px;height:16px;stroke-width:2.4}.stamp b{font:700 11px var(--display);letter-spacing:.14em}.stamp span{color:var(--mute)}
-@keyframes stampin{from{transform:rotate(-1.2deg) scale(1.5);opacity:0}}
-#gauge.full .val{stroke:var(--bad)}#gauge span{display:block}
 .cap button{float:right;font:400 10.5px var(--mono);letter-spacing:0;text-transform:none;color:var(--mute);text-decoration:underline}
 .cap button:hover{color:var(--bad)}
 .ver{font:400 10.5px var(--mono);margin-top:8px;color:var(--mute)}.ver a{color:var(--amber)}
@@ -253,3 +260,56 @@ details.meta[open] summary{margin-bottom:8px}details.meta .trace{text-transform:
   #ref{position:fixed;inset:0;width:auto;max-width:none;z-index:5;border:0}
 }
 @media (max-width:860px){#register th:nth-child(5),#register td:nth-child(5),#register th:nth-child(6),#register td:nth-child(6){display:none}}
+
+/* ---- motion: Dexterity "Line of flow" -------------------------------------------------------
+   Entrances play once (app.js enter() sets --t so a redraw continues them instead of restarting).
+   Only transform and opacity move, except a one-off stroke draw. Nothing loops while the window is
+   idle: the only endless animations are the working marks shown while an answer is being written. */
+@keyframes dx-rise{from{opacity:0;transform:translateY(10px)}}
+@keyframes dx-pop{0%{transform:scale(.4);opacity:0}70%{transform:scale(1.12);opacity:1}100%{transform:none}}
+@keyframes dx-draw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
+@keyframes dx-breathe{0%,100%{opacity:1}50%{opacity:.45}}
+@keyframes dx-wipe{from{transform:scaleX(0)}}
+@keyframes dx-stamp{0%{opacity:0;transform:rotate(-7deg) scale(1.6)}60%{opacity:1;transform:rotate(-1.2deg) scale(.96)}100%{transform:rotate(-1.2deg)}}
+@keyframes dx-alert{0%{opacity:.7;transform:scale(1)}100%{opacity:0;transform:scale(1.04,1.25)}}
+.in{animation:dx-rise .42s var(--ease) both;animation-delay:var(--t,0ms)}
+/* a new question: its node pops onto the line, the words rise after it */
+.turn.in{animation:none}
+.turn.in .node{animation:dx-pop .42s var(--ease) both;animation-delay:var(--t)}
+.turn.in .q,.turn.in .fuTag{animation:dx-rise .42s var(--ease) both;animation-delay:calc(var(--t) + 60ms)}
+/* "numbers found in sources": pressed on like a rubber stamp, then the tick draws in */
+.stamp.in{animation:dx-stamp .5s var(--ease) both;animation-delay:var(--t)}
+.stamp.in path{stroke-dasharray:1;animation:dx-draw .35s var(--ease) both;animation-delay:calc(var(--t) + 320ms)}
+/* red flags arrive with one ring of attention, then stay as they are */
+.chk.bad{position:relative}
+.chk.bad.in:after{content:"";position:absolute;inset:-1px;border:2px solid var(--bad);border-radius:5px;pointer-events:none;opacity:0;
+  animation:dx-alert .8s ease-out 2;animation-delay:calc(var(--t) + 350ms)}
+/* hover: small, quick, pointing the way */
+.slip{transition:transform .2s var(--ease),border-color .15s,background-color .15s}.slip:hover{transform:translateY(-2px)}
+.starts button,.next button{transition:transform .2s var(--ease),border-color .15s}
+.starts button:hover,.next button:hover{transform:translateX(3px)}
+.tool,.ghost,.readout{transition:color .15s,border-color .15s,background-color .15s}
+.node{transition:transform .2s var(--ease)}.turn:hover>.node{transform:scale(1.06)}
+/* empty state: a run from the question to the highlighted page, drawn once */
+.hero .flow{display:block;width:100%;max-width:440px;height:auto;margin:0 0 16px -4px;overflow:visible;stroke-width:1.5}
+.flow .run{stroke:var(--cyan);opacity:.8;stroke-dasharray:1}
+.flow .qn{stroke:var(--amber);stroke-width:2;fill:var(--bg)}
+.flow text{font:600 14px var(--mono);fill:var(--amber);stroke:none;text-anchor:middle}
+.flow .bal circle{stroke:var(--amber);stroke-width:1.5;fill:var(--bg)}.flow .bal text{font-size:10.5px}
+.flow .pg path{stroke:var(--mute);fill:var(--panel)}.flow .pg .hair{fill:none;stroke:var(--mute);opacity:.45;stroke-width:1.2}
+.flow .hl{fill:var(--amber-soft);stroke:var(--amber);stroke-width:1}
+.flow .end{fill:var(--amber);stroke:none}
+.flow .tick{stroke:var(--ok);stroke-width:2;stroke-dasharray:1}
+.flow .qn,.flow .ql,.flow .bal,.flow .pg,.flow .end{transform-box:fill-box;transform-origin:center}
+.flow .hl{transform-box:fill-box;transform-origin:left center}
+.hero.in .flow .qn,.hero.in .flow .ql{animation:dx-pop .45s var(--ease) both;animation-delay:var(--t)}
+.hero.in .flow .run{animation:dx-draw 1s var(--flow) both;animation-delay:calc(var(--t) + 150ms)}
+.hero.in .flow .bal{animation:dx-pop .4s var(--ease) both;animation-delay:calc(var(--t) + var(--d))}
+.hero.in .flow .pg{animation:dx-rise .5s var(--ease) both;animation-delay:calc(var(--t) + var(--d))}
+.hero.in .flow .hl{animation:dx-wipe .45s var(--ease) both;animation-delay:calc(var(--t) + 950ms)}
+.hero.in .flow .end{animation:dx-pop .4s var(--ease) both;animation-delay:calc(var(--t) + 1050ms)}
+.hero.in .flow .tick{animation:dx-draw .35s var(--ease) both;animation-delay:calc(var(--t) + 1200ms)}
+.hero.in{animation:none}
+.hero.in>:not(.flow){animation:dx-rise .5s var(--ease) both;animation-delay:calc(var(--t) + var(--d,0ms))}
+.hero.in>.cap{--d:60ms}.hero.in>h1{--d:120ms}.hero.in>p{--d:180ms}.hero.in>.dials{--d:240ms}.hero.in>.starts{--d:300ms}
+@media (max-width:860px){#topicBtn{padding:0 10px}#topicBtn span{display:none}}

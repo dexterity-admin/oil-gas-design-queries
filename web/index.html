@@ -44,7 +44,9 @@
       <div id="thread" role="log" aria-label="Questions and answers"></div>
       <div id="sr" class="sr" role="status" aria-live="polite"></div>
       <form id="composer">
-        <div id="gauge" title="How many earlier questions are carried into the next one" hidden></div>
+        <button type="button" id="topicBtn" aria-label="New topic" title="Start a fresh chat. This one stays in Saved chats." hidden>
+          <svg viewBox="0 0 20 20"><path d="M10 4v12M4 10h12"/></svg><span>New topic</span>
+        </button>
         <div class="inputWrap">
           <textarea id="input" rows="1" placeholder="Ask about your standards and design documents…" autofocus></textarea>
           <button type="button" id="mic" class="tool" title="Dictate" hidden>
