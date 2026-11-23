@@ -366,24 +366,28 @@ def other_row_numbers(answer, source_text):
     matched, ruled_out, mode = set(), set(), None
     lines = source_text.rstrip().splitlines()
     if lines and not lines[-1].startswith("- "):  # the grounding text ends with the question: its numbers are the user's
-        matched |= {v for v, _, _ in _numbers(lines[-1])}
+        matched |= {abs(v) for v, _, _ in _numbers(lines[-1])}
     for ln in lines:
         s = ln.strip()
         if s == "Row that matches the question:":
             mode = "match"
         elif s.startswith("Other rows of the same table"):
             mode = "other"
+        elif s.startswith("NOTE: no row of this table covers"):
+            mode = "note"  # the matcher already said this table does not answer the question: all its rows are ruled out
+        elif s == "Table, one row per line:" and mode == "note":
+            mode = "other"
         elif s.startswith("Value that answers the question:"):
-            matched |= {v for v, _, _ in _numbers(s)}
-        elif mode and s.startswith("- "):
-            (matched if mode == "match" else ruled_out).update(v for v, _, _ in _numbers(s))
+            matched |= {abs(v) for v, _, _ in _numbers(s)}
+        elif mode in ("match", "other") and s.startswith("- "):
+            (matched if mode == "match" else ruled_out).update(abs(v) for v, _, _ in _numbers(s))
         else:
             mode = None
     body = re.sub(r"\[\d{1,2}(?:\s*,\s*\d{1,2})*\]", " ", answer)
     body = re.sub(r"(?m)^\s*\d+[.)]\s", " ", body)
     bad = []
     for v, _, raw in _numbers(body):
-        if v in ruled_out and v not in matched and raw not in bad:
+        if abs(v) in ruled_out and abs(v) not in matched and raw not in bad:  # "±0.8" and "-0.8" are one value here
             bad.append(raw)
     return bad
 

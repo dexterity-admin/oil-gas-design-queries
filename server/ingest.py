@@ -310,7 +310,9 @@ def _readable(text):
     return "\n".join(keep)
 
 
-def parse_pdf(path, progress=None):
+def parse_pdf(path, progress=None, lock=None):
+    """lock: the PyMuPDF lock the caller holds. It is let go between pages, so the page viewer is not
+    shut out for the hour a 445-page scanned book takes to read."""
     chunks, notes, heading, read_again = [], [], "", 0
     builtin, tesseract = ocr.available(), bool(shutil.which("tesseract"))
     with pymupdf.open(path) as doc:
@@ -323,6 +325,10 @@ def parse_pdf(path, progress=None):
         # page, contents and the like, which match every question and answer none.
         front = toc[1][0] if len(toc) >= 3 and toc[0][0] <= 2 and toc[1][0] <= 40 else 0
         for pno, page in enumerate(doc, start=1):
+            if lock is not None and pno > 1:
+                lock.release()
+                time.sleep(0.05)  # a waiting page render takes the lock here
+                lock.acquire()
             loc = "Page %d" % pno
             if pno < front and _is_scan(page):
                 continue
@@ -590,7 +596,7 @@ def sync():
                 if p.suffix.lower() == ".pdf":
                     from .app import PDF_LOCK
                     with PDF_LOCK:
-                        pages, chunks, note = parse_pdf(p, lambda m, n=p.name: status.update(current=n + " · " + m))
+                        pages, chunks, note = parse_pdf(p, lambda m, n=p.name: status.update(current=n + " · " + m), PDF_LOCK)
                 else:
                     pages, chunks, note = PARSERS[p.suffix.lower()](p)
                 entry.update(pages=pages, passages=len(chunks), tables=sum(c["kind"] == "table" for c in chunks), note=note)

@@ -103,6 +103,12 @@ def test_value_from_a_ruled_out_row_is_flagged():
     assert flag("Hold it for 24 hours with 8 settlement points [1].") == []
     assert flag("Tanks up to 15 m are held for 24 hours [1].") == []      # 15 is in the matched row too
     assert flag("Use 16 settlement points.") == ["16"]
+    # Seen on the real pipe guide: "OD of NPS 24?" - the matcher said no row covers NPS 24, the model quoted NPS 2's 60.3.
+    q3 = "What is the OD of NPS 24 pipe?"
+    src3 = g.table_text(SPAN, "span for 24 inch pipe")[0] + "\nNPS 2 pipe is 60 mm or 2.375 inch.\n" + q3
+    assert src3.startswith("NOTE: no row")
+    assert g.other_row_numbers("The span is 5.8 m [1].", src3) == ["5.8"]
+    assert g.other_row_numbers("Not in the table; see the page [1].", src3) == []
     q2 = "Maximum span for 8 inch stainless steel pipe thinner than schedule 10S?"   # 10 is the user's, not row "10 and above"
     src2 = g.table_text(INSUL, "mineral wool for 8 inch pipe at 150 C")[0] + "\n" + q2
     assert g.other_row_numbers("Below schedule 10S use 80 percent [1].", src2) == []

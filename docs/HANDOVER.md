@@ -115,6 +115,8 @@ These are the reasons this handover exists. Each one needs a machine that can do
 - **Words run together in scanned text.** The bundled reader (RapidOCR 1.4.4, PP-OCRv4 models) often drops the spaces in English lines ("Theminimumcorrosionallowance"). Numbers are not affected, but keyword search cannot find those words and the passage is hard to read. Per-character positions are too rough to put the spaces back safely. Check how often this happens on the real scanned book before choosing a fix (an English recognition model, or splitting lines at blank pixel columns).
 - **Scan reader fixes in this change.** (a) RapidOCR shrank each page to about 90 dpi before looking for lines and silently missed whole lines of 10 pt print; `server/ocr.py` now sets `det_limit_side_len=1600` (+0.3 s a page). (b) `_readable` in `server/ingest.py` dropped scanned table rows made of numbers and short words ("Up to 15 24 8") while keeping their neighbours ("Above 15 48 16"), so a table looked complete with a row missing; such rows are now kept. `requirements.txt` now requires RapidOCR 1.4.x so running from source reads pages the same way as the installed program (1.4.x needs Python 3.12 or older).
 - **Wrong row with a green stamp (found on the real PC, guarded in this change).** Asked "How long is the hydrotest hold for a 10 m diameter tank?", the installed v1.0.10 answered **48 hours** (right: 24) with "numbers found in sources". The matcher had given the right row; a scanned copy of the same standard, read by v1.0.10 with the "Up to 15" row missing, was also among the sources and the model took 48 from it. Besides fixing the scan reader, `grounding.other_row_numbers` now flags any number the answer takes from a row the matcher ruled out, and the app shows "CHECK THE ROW" in red instead of the green stamp. It cannot help when the matcher picked no row. Numbers the user typed are never flagged. Known false alarm (1 of 30 in the evaluation): the follow-up "and for smaller ones?" is rewritten to a query that still says "above 15 m", the matcher picks the Above 15 row, and the correct 24 h answer gets the red flag.
+- **Wrong column.** The matcher picks rows, not columns. On the real pipe guide the model twice took the value from the wrong column (stainless instead of carbon steel; the wrong material in a sideways table) and nothing flagged it. Next deterministic step: when the question names exactly one column header ("carbon steel", "-29 C"), say "Value that answers the question" for that column only, as is already done for temperature-range headers.
+- **Page view blocked while a big PDF is read (fixed in this change).** Indexing held the PyMuPDF lock for a whole document, so every citation page image in the app hung for the hour the scanned book takes. `parse_pdf` now lets go of the lock between pages.
 - **GPU check leaves no reason.** On the GT 710 the GPU test fails (`ErrorDeviceLost`) and `settings.json` records `gpu_s: null` with no note, so nobody can tell later why the CPU was chosen.
 - **Data folders follow `%LOCALAPPDATA%`.** Both programs keep the model (1.1 GB), index and page cache under the user's profile on C:. They can be moved only with environment variables (`DATA_DIR`, `LIBRARY_DIR` for the Library, `DEXMENTOR_HOME` for the engineer app); the installers do not ask.
 - **Admin PIN also applies on the server PC.** Once a PIN is set, changes made on the server PC itself need it too (the comment in `server/config.py` says the server PC is always allowed).
@@ -154,6 +156,21 @@ Results of the 23 Nov 2026 pass on one office PC (i7-6700, Windows 10, v1.0.10),
 - [ ] Reboot the server PC: the Library starts by itself
 - [ ] Upgrade: install a newer release over the old one; documents and index are kept
 - [ ] Uninstall both programs cleanly
+
+### Real-model answers on the pipe guide (23 Nov 2026)
+
+Installed v1.0.10, Qwen 1.5B on the i7-6700, starter pack downloaded from the real private repository with a fine-grained read-only key (connect, download and index: 11 s for the 15-page guide). 19 questions: the 12 below plus 7 more. Judged by reading the page.
+
+| Result | Count | Questions |
+| --- | --- | --- |
+| Right | 11 | NPS 4 OD 114; 1½" OD 48.3; DN 200 = NPS 8; DN 25 = NPS 1; hydro hold 5 s (A530); NPS 6 OD tolerance A106M +1.6/-0.8; NPS 2 OD tolerance A106M ±0.8; stainless NPS 20+ welded +17.5/-12.5 %; no hard punching on stainless below 12 mm; straightness 3.2 mm over 3.0 m; A106 Gr B |
+| Refused, correctly | 3 | corrosion allowance; pig launcher design pressure; length tolerance (by code, in under 1 s) |
+| Wrong | 5 | DN 50 OD → 88.9 (right: 60.3; the matcher gave the right row, the model took the next one); NPS 24 OD → "60.3 mm or 2.375 in" (the matcher said no row covers NPS 24; the model quoted NPS 2); below -29 C → A335 (right: A333 Gr 6; sideways one-row table, model picked the wrong column); seamless carbon steel wall tolerance → +15.0/-12.5 % (that is the stainless column; carbon steel is -12.5 % minimum); Sch 40 wall of NPS 6 → "-12.5 %" (not in the guide, should be refused) |
+| Invented | 0 | every number was in the sources, which is why all five wrong answers got the green stamp in v1.0.10 |
+
+With this change the two wrong numbers (88.9 and 60.3) get the red "CHECK THE ROW" flag: re-checked against the real grounding text, and the 7 right numeric answers stay unflagged. The other three wrong answers pick the wrong **column** (material, carbon steel vs stainless) or answer a question the guide does not cover; no check catches them yet. The Sch 40 one is partly the document's own error: its wall-tolerance table has the first row's NPS and DN cells swapped (NPS "6 to 65", DN "⅛ to 2½"), so NPS 6 matches that row.
+
+Meaning-based search was on (embeddings downloaded) for all of these.
 
 ### Questions used so far
 
