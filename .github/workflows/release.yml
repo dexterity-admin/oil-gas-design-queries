@@ -96,8 +96,8 @@ jobs:
           python brand/make_wizard.py   # the branded wizard artwork, from the original mark and the app's fonts
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
-          & $iscc installer\dexmentor.iss
-          & $iscc installer\library.iss
+          & $iscc installer\dexmentor.iss; if ($LASTEXITCODE) { exit 1 }
+          & $iscc installer\library.iss; if ($LASTEXITCODE) { exit 1 }
           Get-ChildItem dist\*-Setup.exe | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}}
       - uses: actions/upload-artifact@v4
         if: github.event_name == 'workflow_dispatch' && !inputs.publish

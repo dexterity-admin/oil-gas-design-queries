@@ -72,7 +72,7 @@ begin
   Result := ExpandConstant('{param:QUIETSTART|0}') = '1';
 end;
 
-procedure Ink(Page: TWinControl);
+procedure PaintInk(Page: TNewNotebookPage);
 begin
   Page.Color := INK;
 end;
@@ -83,12 +83,12 @@ begin
   WizardForm.PageNameLabel.Font.Color := clWhite;
   WizardForm.PageNameLabel.Font.Name := 'Segoe UI Semibold';
   WizardForm.PageDescriptionLabel.Font.Color := MIST;
-  Ink(WizardForm.WelcomePage);
+  PaintInk(WizardForm.WelcomePage);
   WizardForm.WelcomeLabel1.Font.Color := clWhite;
   WizardForm.WelcomeLabel1.Font.Name := 'Segoe UI Semibold';
   WizardForm.WelcomeLabel1.Font.Size := 16;
   WizardForm.WelcomeLabel2.Font.Color := MIST;
-  Ink(WizardForm.FinishedPage);
+  PaintInk(WizardForm.FinishedPage);
   WizardForm.FinishedHeadingLabel.Font.Color := clWhite;
   WizardForm.FinishedHeadingLabel.Font.Name := 'Segoe UI Semibold';
   WizardForm.FinishedHeadingLabel.Font.Size := 16;
