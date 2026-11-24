@@ -1,27 +1,42 @@
 name: Release
-# Every push builds both Windows installers, smoke-tests them, and publishes a new release.
+# Every push to master builds both Windows installers, smoke-tests them, and publishes a new release.
+# A manual run on any branch builds and tests the same way; it publishes only when "publish" is ticked.
 on:
   push:
-    branches: [master, "claude/**"]
+    branches: [master]
     paths-ignore: ["site/**", "README.md", "docs/**", "eval/**"]
   workflow_dispatch:
+    inputs:
+      publish: {description: "Publish a GitHub release", type: boolean, default: false}
 permissions:
   contents: write
 concurrency: {group: release, cancel-in-progress: false}
 jobs:
   release:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       APP_VERSION: 1.0.${{ github.run_number }}
       PYTHONUTF8: "1"
+      CARGO_TERM_COLOR: never
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/target
+          key: cargo-${{ hashFiles('apps/Cargo.lock') }}
+          restore-keys: cargo-
       - run: pip install -q -r requirements.txt pyinstaller pytest
-      - name: Unit tests
+      - name: Unit tests (Python)
         run: python -m pytest -q tests
+      - name: Unit tests (Rust)
+        working-directory: apps
+        run: cargo test --release --locked -p dexwin
       - name: Stamp the version
         shell: bash
         run: |
@@ -30,54 +45,99 @@ jobs:
           import json, os
           p = "desktop/models.json"; m = json.load(open(p)); m["version"] = os.environ["APP_VERSION"]; json.dump(m, open(p, "w"), indent=2)
           PY
-      - name: Build DexMentor (engineer app)
-        run: pyinstaller --noconfirm --onefile --noconsole --name DexMentor --icon desktop/dexmentor.ico --add-data "desktop/models.json;." desktop/dexmentor.py
-      - name: Build DexMentor Library (server PC)
+      - name: Build the desktop apps (Rust)
+        working-directory: apps
+        run: cargo build --release --locked
+      - name: Build the Library engine (Python)
         run: >
-          pyinstaller --noconfirm --onedir --noconsole --name DexMentorLibrary --icon desktop/dexmentor.ico
+          pyinstaller --noconfirm --onedir --noconsole --name DexMentorLibraryEngine --icon desktop/library.ico
           --paths . --collect-submodules server --add-data "web;web" --add-data "starter;starter" --collect-all fastembed --collect-all onnxruntime --collect-all rapidocr_onnxruntime
           --collect-all pymupdf --collect-all tokenizers --collect-submodules uvicorn --collect-submodules docx
           --collect-submodules pptx --collect-submodules openpyxl --collect-data docx --collect-data pptx
           --hidden-import anthropic desktop/library_entry.py
-      - name: Smoke test (Library starts, takes a document, engineer app finds it, scanned page and Word table read)
+      - name: Put the programs together
+        shell: bash
+        run: |
+          cp apps/target/release/DexMentorAsk.exe dist/DexMentorAsk.exe
+          mkdir -p dist/DexMentorLibrary
+          cp apps/target/release/DexMentorLibrary.exe dist/DexMentorLibrary/
+          mv dist/DexMentorLibraryEngine dist/DexMentorLibrary/engine
+          curl -sSfL -o dist/MicrosoftEdgeWebview2Setup.exe https://go.microsoft.com/fwlink/p/?LinkId=2124703
+          ls -la dist dist/DexMentorLibrary
+      - name: Smoke test (Library starts, takes a document, Ask finds it, one copy only, scanned page and Word table read)
         shell: bash
         run: |
           python eval/make_corpus.py corpus
           ./dist/DexMentorLibrary/DexMentorLibrary.exe --no-window &
-          for i in $(seq 60); do curl -sf http://127.0.0.1:8700/api/status > /dev/null && break; sleep 2; done
-          curl -sf http://127.0.0.1:8700/api/status | grep -q "\"version\":\"$APP_VERSION\"" || { echo "Library did not start"; cat "$LOCALAPPDATA/DexMentor Library/kb/server.log"; exit 1; }
+          for i in $(seq 90); do curl -sf http://127.0.0.1:8700/api/status > /dev/null && break; sleep 2; done
+          curl -sf http://127.0.0.1:8700/api/status | grep -q "\"version\":\"$APP_VERSION\"" || { echo "Library did not start"; cat "$LOCALAPPDATA/DexMentor Library/kb/server.log" "$LOCALAPPDATA/DexMentor Library/kb/shell.log"; exit 1; }
           curl -sf -X PUT --data-binary "@corpus/DDS-ME-020 Bolt Torque Chart.xlsx" "http://127.0.0.1:8700/api/admin/files/Bolt%20Torque%20Chart.xlsx"
-          DEXMENTOR_SERVER=http://127.0.0.1:9 ./dist/DexMentor.exe --no-window &
+          DEXMENTOR_SERVER=http://127.0.0.1:9 ./dist/DexMentorAsk.exe --no-window &
           sleep 12
-          curl -s http://127.0.0.1:8720/local/status | grep -q '"server_url": "http://[0-9.]*:8700"' || { echo "engineer app did not find the Library"; curl -s http://127.0.0.1:8720/local/status; exit 1; }
+          curl -s http://127.0.0.1:8720/local/status | grep -qE '"server_url": ?"http://[0-9.]*:8700"' || { echo "DexMentor Ask did not find the Library"; curl -s http://127.0.0.1:8720/local/status; cat "$LOCALAPPDATA/DexMentor/ask.log"; exit 1; }
+          curl -s http://127.0.0.1:8720/local/status | grep -q '"app": *"DexMentor Ask"' || { echo "wrong app name"; exit 1; }
           want=$((1 + $(ls starter | grep -ciE '\.(pdf|docx|xlsx|xlsm|pptx)$' || true)))
           curl -sf http://127.0.0.1:8720/api/status | grep -q "\"documents\":$want" || { echo "expected $want documents (1 uploaded + the starter library)"; curl -s http://127.0.0.1:8720/api/status; exit 1; }
+          # A second start hands over to the running copy and ends at once.
+          timeout 30 ./dist/DexMentorAsk.exe --no-window || { echo "a second DexMentor Ask did not end"; exit 1; }
+          timeout 30 ./dist/DexMentorLibrary/DexMentorLibrary.exe --no-window || { echo "a second DexMentor Library did not end"; exit 1; }
+          [ "$(tasklist //FI "IMAGENAME eq DexMentorAsk.exe" //NH | grep -c DexMentorAsk)" = 1 ] || { echo "more than one DexMentor Ask is running"; exit 1; }
+          # Saved chats go to disk and come back.
+          curl -sf -X PUT -H "Content-Type: application/json" --data '{"chats":[{"id":"c1","title":"Smoke","updated":1,"messages":[]}],"current":"c1"}' http://127.0.0.1:8720/local/chats
+          curl -sf http://127.0.0.1:8720/local/chats | grep -q '"current":"c1"' || { echo "chats were not kept"; exit 1; }
+          test -f "$LOCALAPPDATA/DexMentor/chats/chats.json" || { echo "no chats file on disk"; exit 1; }
+          curl -s -o /dev/null -w "%{http_code}" -H "Origin: http://evil.example" http://127.0.0.1:8720/local/chats | grep -q 403 || { echo "a foreign web page could read the chats"; exit 1; }
           python eval/smoke_docs.py http://127.0.0.1:8700 corpus || { cat "$LOCALAPPDATA/DexMentor Library/kb/server.log"; exit 1; }
           echo "smoke test passed"
       - name: Build the installers
         shell: pwsh
         run: |
+          pip install -q fonttools brotli pillow
+          python brand/make_wizard.py   # the branded wizard artwork, from the original mark and the app's fonts
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
-          & $iscc installer\dexmentor.iss
-          & $iscc installer\library.iss
-          Get-ChildItem dist\*.exe | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}}
+          & $iscc installer\dexmentor.iss; if ($LASTEXITCODE) { exit 1 }
+          & $iscc installer\library.iss; if ($LASTEXITCODE) { exit 1 }
+          Get-ChildItem dist\*-Setup.exe | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}}
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch' && !inputs.publish
+        with: {name: installers, path: "dist/*-Setup.exe", retention-days: 7}
       - name: Publish the release
+        if: github.event_name == 'push' || inputs.publish
         shell: bash
         env: {GH_TOKEN: "${{ github.token }}"}
         run: |
           cat > notes.md <<EOF
           ## DexMentor $APP_VERSION
 
-          | Download | For |
-          | --- | --- |
-          | **DexMentor-Setup.exe** | Every engineer's PC |
-          | **DexMentorLibrary-Setup.exe** | The one server PC that holds the standards |
+          | Download | Program | For |
+          | --- | --- | --- |
+          | **DexMentorAsk-Setup.exe** | DexMentor Ask | Every engineer's PC |
+          | **DexMentorLibrary-Setup.exe** | DexMentor Library | The one server PC that holds the standards |
 
-          Install the Library first, add documents on its Library desk, then install DexMentor on the engineers' PCs: it finds the Library on the office network by itself.
+          Install the Library first, add documents on its Library desk, then install DexMentor Ask on the engineers' PCs: it finds the Library on the office network by itself. DexMentor Ask installs over the earlier "DexMentor" app and keeps its model, settings and saved chats.
 
           Windows may show a "Windows protected your PC" notice because the installers are not code-signed: choose *More info*, then *Run anyway*.
 
           **Change:** $(git log -1 --pretty=%s)
           EOF
-          gh release create "v$APP_VERSION" dist/DexMentor-Setup.exe dist/DexMentorLibrary-Setup.exe --title "DexMentor $APP_VERSION" --notes-file notes.md --target "${{ github.sha }}" --latest
+          # latest.json: the feed both apps update from (version, each installer's address and SHA-256, and the
+          # release before this one, so an app can go back to it).
+          gh release download --repo "${{ github.repository }}" --pattern latest.json --dir prev 2>/dev/null || true
+          python - <<'PY'
+          import hashlib, json, os, pathlib
+          v, repo = os.environ["APP_VERSION"], os.environ["GITHUB_REPOSITORY"]
+          def entry(name):
+              h = hashlib.sha256(pathlib.Path("dist", name).read_bytes()).hexdigest()
+              return {"url": f"https://github.com/{repo}/releases/download/v{v}/{name}", "sha256": h}
+          feed = {"version": v, "notes": os.popen("git log -1 --pretty=%s").read().strip(),
+                  "ask": entry("DexMentorAsk-Setup.exe"), "library": entry("DexMentorLibrary-Setup.exe")}
+          prev = pathlib.Path("prev/latest.json")
+          if prev.exists():
+              p = json.loads(prev.read_text(encoding="utf-8"))
+              if p.get("version") != v and "ask" in p and "library" in p:
+                  feed["previous"] = {k: p[k] for k in ("version", "ask", "library")}
+          pathlib.Path("dist/latest.json").write_text(json.dumps(feed, indent=2), encoding="utf-8")
+          print(json.dumps(feed, indent=2))
+          PY
+          gh release create "v$APP_VERSION" dist/DexMentorAsk-Setup.exe dist/DexMentorLibrary-Setup.exe dist/latest.json --title "DexMentor $APP_VERSION" --notes-file notes.md --target "${{ github.sha }}" --latest

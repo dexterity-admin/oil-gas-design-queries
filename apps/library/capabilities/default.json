@@ -1,0 +1,7 @@
+{
+  "identifier": "default",
+  "description": "The app's own pages (the splash and the page served on this PC's loopback address) may call the app's update commands. No plugin or file access is granted.",
+  "windows": ["main"],
+  "remote": { "urls": ["http://127.0.0.1:*/*", "http://localhost:*/*"] },
+  "permissions": ["core:default", "allow-update-status", "allow-update-check", "allow-update-install"]
+}

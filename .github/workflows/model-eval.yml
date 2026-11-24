@@ -75,26 +75,31 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - run: pip install -q -r requirements.txt pyinstaller
-      - name: Build DexMentor.exe
-        run: pyinstaller --onefile --noconsole --name DexMentor --icon desktop/dexmentor.ico --add-data "desktop/models.json;." desktop/dexmentor.py
+      - name: Build DexMentor Ask
+        working-directory: apps
+        run: cargo build --release --locked -p dexmentor-ask
       - uses: actions/upload-artifact@v4
-        with: {name: DexMentor-windows, path: dist/DexMentor.exe}
-      - name: Download, load and ask through the real launcher exe
+        with: {name: DexMentorAsk-windows, path: apps/target/release/DexMentorAsk.exe}
+      - name: Download, load and ask through the real app exe
         shell: bash
         run: |
           python eval/make_corpus.py evallib
           python -m server > server.log 2>&1 &
-          DEXMENTOR_SERVER=http://127.0.0.1:9 ./dist/DexMentor.exe --no-window &
+          DEXMENTOR_SERVER=http://127.0.0.1:9 ./apps/target/release/DexMentorAsk.exe --no-window &
           sleep 10
-          echo "auto-connect (started with a dead address): $(curl -s http://127.0.0.1:8720/local/status | grep -o '"server_url": "[^"]*"')"
+          echo "auto-connect (started with a dead address): $(curl -s http://127.0.0.1:8720/local/status | grep -oE '"server_url": ?"[^"]*"')"
           echo "discover: $(curl -s -X POST http://127.0.0.1:8720/local/discover)"
           curl -s -X POST http://127.0.0.1:8720/local/download
           for i in $(seq 240); do
             S=$(curl -s http://127.0.0.1:8720/local/status); echo "$S" | cut -c1-200
-            echo "$S" | grep -q '"state": "ready"' && break
-            echo "$S" | grep -q '"error": "[^"]' && { echo DOWNLOAD FAILED; exit 1; }
+            echo "$S" | grep -qE '"state": ?"ready"' && break
+            echo "$S" | grep -qE '"error": ?"[^"]' && { echo DOWNLOAD FAILED; exit 1; }
             sleep 5
           done
+          # The graphics card is tested only on request (DEXMENTOR_FORCE_GPU_TEST makes the runner's card count).
+          curl -s -X POST http://127.0.0.1:8720/local/retune
+          for i in $(seq 120); do S=$(curl -s http://127.0.0.1:8720/local/status); echo "$S" | grep -qE '"state": ?"(ready|running)"' && break; sleep 5; done
+          echo "after the graphics card test: $S"
           find dmhome -maxdepth 3 | head -40
           curl -s http://127.0.0.1:8720/api/status | cut -c1-300
           python eval/run_eval.py http://127.0.0.1:8720/llm windows-default ""
@@ -113,21 +118,21 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - run: pip install -q -r requirements.txt pyinstaller
-      - name: Build DexMentor Library
+      - name: Build the DexMentor Library engine
         run: >
-          pyinstaller --noconfirm --onedir --noconsole --name DexMentorLibrary --icon desktop/dexmentor.ico
+          pyinstaller --noconfirm --onedir --noconsole --name DexMentorLibraryEngine --icon desktop/library.ico
           --paths . --collect-submodules server --add-data "web;web" --add-data "starter;starter" --collect-all fastembed --collect-all onnxruntime --collect-all rapidocr_onnxruntime --collect-all pymupdf
           --collect-all tokenizers --collect-submodules uvicorn --collect-submodules docx --collect-submodules pptx
           --collect-submodules openpyxl --collect-data docx --collect-data pptx --hidden-import anthropic
           desktop/library_entry.py
       - uses: actions/upload-artifact@v4
-        with: {name: DexMentorLibrary-windows, path: dist/DexMentorLibrary}
+        with: {name: DexMentorLibraryEngine-windows, path: dist/DexMentorLibraryEngine}
       - name: Start it, add documents through the Library desk API, ask a question
         shell: bash
         run: |
           python eval/make_corpus.py corpus
-          du -sh dist/DexMentorLibrary | cut -f1
-          ./dist/DexMentorLibrary/DexMentorLibrary.exe --no-window &
+          du -sh dist/DexMentorLibraryEngine | cut -f1
+          ./dist/DexMentorLibraryEngine/DexMentorLibraryEngine.exe --no-window &
           for i in $(seq 60); do curl -sf http://127.0.0.1:8700/api/status > /dev/null && break; sleep 2; done
           curl -s http://127.0.0.1:8700/api/status || { echo SERVER DID NOT START; cat "$LOCALAPPDATA/DexMentor Library/kb/server.log"; exit 1; }
           echo; curl -s http://127.0.0.1:8700/api/admin/check; echo

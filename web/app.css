@@ -236,7 +236,6 @@ details.meta[open] summary{margin-bottom:8px}details.meta .trace{text-transform:
 .chk b{font:700 10.5px var(--display);letter-spacing:.14em;margin-right:8px}
 .chk.ok{color:var(--mute)}.chk.ok b{color:var(--ok)}
 .chk.bad{border-color:var(--bad);color:var(--ink);background:rgba(255,107,107,.08)}.chk.bad b{color:var(--bad)}
-.byMark{height:11px;vertical-align:-1px;margin-right:4px}
 
 .unit .job{padding:6px 0 0}.unit .rm{color:var(--mute);padding:0 6px;width:auto;margin:0}.unit .rm:hover{color:var(--bad)}
 
@@ -313,3 +312,8 @@ details.meta[open] summary{margin-bottom:8px}details.meta .trace{text-transform:
 .hero.in>:not(.flow){animation:dx-rise .5s var(--ease) both;animation-delay:calc(var(--t) + var(--d,0ms))}
 .hero.in>.cap{--d:60ms}.hero.in>h1{--d:120ms}.hero.in>p{--d:180ms}.hero.in>.dials{--d:240ms}.hero.in>.starts{--d:300ms}
 @media (max-width:860px){#topicBtn{padding:0 10px}#topicBtn span{display:none}}
+/* In-app update notice (desktop apps only): a card in the corner, so the layout never moves. */
+.byMark{height:11px;vertical-align:-1px;margin-right:4px}
+.updbar{position:fixed;right:16px;bottom:16px;z-index:50;max-width:min(440px,calc(100vw - 32px));padding:12px 14px;border:1px solid var(--amber);border-radius:8px;background:var(--raise);color:var(--ink);font-size:13.5px;line-height:1.45;box-shadow:0 8px 28px rgba(0,0,0,.35)}
+.updbar b{display:block;margin-bottom:2px}.updbar .row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.updbar .bar{margin-top:8px}.updline{margin-top:6px;font-size:12px;color:var(--mute)}.updline a{color:var(--mute)}

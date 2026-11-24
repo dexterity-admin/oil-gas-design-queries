@@ -1,0 +1,25 @@
+# DexMentor desktop apps. Build from this folder:  cargo build --release
+#   DexMentorAsk.exe      the engineers' app (all Rust: window, local model, chat history)
+#   DexMentorLibrary.exe  the server PC's window and tray; runs the Python engine (server/) behind it
+[workspace]
+members = ["dexwin", "ask", "library"]
+resolver = "2"
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+
+[workspace.dependencies]
+tauri = { version = "2", features = ["custom-protocol"] }
+tauri-build = { version = "2", features = [] }
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Storage_FileSystem", "Win32_System_SystemInformation"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+

@@ -1,0 +1,12 @@
+[package]
+name = "dexwin"
+version.workspace = true
+edition.workspace = true
+description = "Windows helpers shared by DexMentor Ask and DexMentor Library"
+
+[dependencies]
+serde_json.workspace = true
+windows-sys.workspace = true
+rusty-leveldb = "4"
+sha2 = "0.10"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "default-tls"] }

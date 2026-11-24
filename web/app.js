@@ -29,10 +29,49 @@ $('style').onclick = (e) => { const b = e.target.closest('button'); if (b) { sty
 paintStyle();
 
 // ---------- logbook of saved chats ----------
-let chats = store.get('chats', []);
-let current = chats.find((c) => c.id === store.get('current')) || null;
-let messages = current ? current.messages : [];
+// In the desktop apps the chats are kept on disk by the app (local/chats), in this Windows user's own folder,
+// written safely so a restart or a power cut cannot lose them. The browser's storage is only the fallback for
+// a plain browser, where there is no app to keep them.
+let chats = [], current = null, messages = [], disk = false;
 let busy = false, ref = null, local = null, tick = null, lib = null, activeSrc = null, serverLLM = false, heroAt = Date.now();
+
+// An answer that was still being written when the app or the PC stopped is kept, marked as interrupted.
+function settle(list) {
+  for (const c of list) for (const m of c.messages || []) {
+    if (m.role === 'assistant' && m.stages) {
+      ['stages', 'stage', 'secs', 'found', 'shown', 'wrote'].forEach((k) => delete m[k]);
+      m.cut = true; m.error = 'This answer was interrupted (the app or the PC was closed). Ask again.' + (m.content ? ' The text above is incomplete.' : '');
+    }
+  }
+  return list;
+}
+async function loadChats() {
+  let saved = null;
+  try { const r = await fetch('local/chats'); if (r.ok) { saved = await r.json(); disk = true; } } catch {}
+  const old = store.get('chats', []);
+  if (!disk) saved = { chats: old, current: store.get('current') };
+  else if (old.length) { // chats this window kept in the browser before: move them to the disk once
+    const have = new Set(saved.chats.map((c) => c.id));
+    saved.chats.push(...old.filter((c) => !have.has(c.id))); saved.chats.sort((a, b) => b.updated - a.updated);
+  }
+  const early = chats.filter((c) => !(saved.chats || []).some((s) => s.id === c.id)); // asked before the history arrived
+  chats = [...early, ...settle(saved.chats || [])];
+  if (!early.length) {
+    current = chats.find((c) => c.id === saved.current) || chats[0] || null; // the last chat is open again
+    messages = current ? current.messages : [];
+  }
+  if (disk && old.length) { await writeDisk(); localStorage.removeItem('chats'); }
+}
+let writing = null, again = false;
+function writeDisk() { // one save at a time, always the newest state
+  if (writing) { again = true; return writing; }
+  const body = JSON.stringify({ chats: chats.slice(0, 500), current: current?.id || null });
+  writing = fetch('local/chats', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body, keepalive: body.length < 60000 })
+    .then((r) => { if (!r.ok) throw 0; $('chatErr').hidden = true; })
+    .catch(() => { $('chatErr').hidden = false; setTimeout(writeDisk, 5000); })
+    .finally(() => { writing = null; if (again) { again = false; writeDisk(); } });
+  return writing;
+}
 
 function save() {
   if (messages.length && !current) {
@@ -43,8 +82,11 @@ function save() {
   persist();
 }
 function persist() {
-  let keep = 200; while (!store.set('chats', chats.slice(0, keep)) && keep > 5) keep = Math.floor(keep / 2); // full storage: let the oldest go
-  store.set('current', current?.id || null);
+  if (disk) writeDisk();
+  else {
+    let keep = 200; while (!store.set('chats', chats.slice(0, keep)) && keep > 5) keep = Math.floor(keep / 2); // full storage: let the oldest go
+    store.set('current', current?.id || null);
+  }
   renderChats();
 }
 function renderChats() {
@@ -77,7 +119,7 @@ function renameChat(row, c) {
 }
 function openChat(c) {
   if (busy) return;
-  current = c; messages = c ? c.messages : []; closeRef(); store.set('current', c?.id || null);
+  current = c; messages = c ? c.messages : []; closeRef(); if (disk) writeDisk(); else store.set('current', c?.id || null);
   if (!messages.length) heroAt = Date.now();
   renderChats(); render(); if (innerWidth <= 860) $('side').classList.add('closed'); $('input').focus();
 }
@@ -368,6 +410,7 @@ async function ask(q, forceServer = false) {
   const bot = { role: 'assistant', content: '', sources: [], stages: ['Understand', 'Search', 'Read', 'Write'], stage: 0, secs: 0 };
   bot.trace = [{ t: messages.length > 1 ? 'Follow-up received · reading it together with the questions before it' : 'Question received', k: 'in' }];
   messages.push(bot); save(); render(); pump(bot);
+  const autosave = setInterval(persist, 5000); // a half-written answer is on disk too, if the PC stops now
   const started = Date.now();
   tick = setInterval(() => { bot.secs = Math.round((Date.now() - started) / 1000); const c = document.querySelector('.clock'); if (c) c.textContent = pad(Math.floor(bot.secs / 60)) + ':' + pad(bot.secs % 60); }, 1000);
   try {
@@ -384,7 +427,7 @@ async function ask(q, forceServer = false) {
   }
   $('sr').textContent = bot.error || (bot.none ? 'The library does not cover this.' : `Answer ready, ${bot.sources.length} sources.`);
   await penDone(bot); document.querySelector('.sheet')?.classList.remove('scanning');
-  clearInterval(tick); delete bot.shown; delete bot.wrote; bot.took = Math.max(1, Math.round((Date.now() - started) / 1000));
+  clearInterval(tick); clearInterval(autosave); delete bot.shown; delete bot.wrote; bot.took = Math.max(1, Math.round((Date.now() - started) / 1000));
   delete bot.stages; delete bot.stage; delete bot.secs; delete bot.found; bot.at = Date.now(); busy = false; $('send').disabled = false;
   save(); render();
 }
@@ -444,8 +487,14 @@ async function refreshLocal() {
   } catch { local = null; $('modelCard').hidden = true; return false; }
   const c = $('modelCard'); c.hidden = false;
   const mb = (n) => (n / 1048576).toFixed(0);
-  const acc = local.accel, accLine = !acc ? '' : acc.mode === 'gpu' ? ` Using graphics card: ${esc(acc.gpu)} (${acc.gpu_s} s vs ${acc.cpu_s ?? '–'} s on the processor).` : acc.gpu ? ` ${esc(acc.gpu)} was tested: the processor is faster here${acc.gpu_s ? ` (${acc.cpu_s} s vs ${acc.gpu_s} s)` : ''}.` : '';
-  const ver = `<div class="ver">DexMentor ${esc(local.version || '')}${status && local.version && status.version && local.version !== status.version && status.version !== 'dev' && local.version !== 'dev' ? ` · <a href="https://github.com/dexterity-admin/oil-gas-design-queries/releases/latest" target="_blank" rel="noopener">update to ${esc(status.version)}</a>` : ''}</div>`;
+  document.title = local.app; $('appName').textContent = local.app;
+  // The graphics card is only ever tried when the engineer asks: an old card's driver can hang under full load.
+  const acc = local.accel, tested = acc && acc.gpu_s !== undefined;
+  const accLine = !acc ? '' : acc.mode === 'gpu' ? ` Using graphics card: ${esc(acc.gpu)} (${acc.gpu_s} s vs ${acc.cpu_s ?? '–'} s on the processor).`
+    : acc.note ? ` ${esc(acc.note)}` : acc.gpu && tested ? ` ${esc(acc.gpu)} was tested: the processor is faster here${acc.gpu_s ? ` (${acc.cpu_s} s vs ${acc.gpu_s} s)` : ''}.`
+    : acc.gpu ? ` Graphics card found: ${esc(acc.gpu)}. Not used yet.` : '';
+  const gpuBtn = acc?.gpu && acc.mode !== 'gpu' && !tested ? '<button class="ghost" id="gpuBtn" title="Times the processor and the graphics card and keeps the faster. On an old card the screen may pause for a moment.">Test the graphics card</button>' : '';
+  const ver = `<div class="ver">${esc(local.app || '')} ${esc(local.version || '')}${status && local.version && status.version && local.version !== status.version && status.version !== 'dev' && local.version !== 'dev' && !shell ? ` · <a href="https://github.com/dexterity-admin/oil-gas-design-queries/releases/latest" rel="noopener">update to ${esc(status.version)}</a>` : ''}${updLine()}</div>`;
   setTimeout(() => c.insertAdjacentHTML('beforeend', ver));
   if (local.state === 'tuning') {
     c.innerHTML = `<b><i class="led busy"></i>Checking this PC's speed</b>${esc(local.step || '')}…`;
@@ -459,9 +508,13 @@ async function refreshLocal() {
   } else {
     const on = local.state === 'running';
     c.innerHTML = `<b><i class="led ${on ? 'ok' : local.state === 'starting' ? 'busy' : ''}"></i>${on ? 'Model loaded' : local.state === 'starting' ? 'Loading model' : 'Model standing by'}</b>${esc(local.model)}. ` +
-      accLine + (on ? ' Unloads by itself when idle.<button class="ghost" id="unBtn">Stop the model now</button>' : 'Loads when you ask.') +
+      accLine + (on ? ' Unloads by itself when idle.<button class="ghost" id="unBtn">Stop the model now</button>' : 'Loads when you ask.') + gpuBtn +
       (local.error ? `<div class="err">${esc(local.error)}</div>` : '');
     if (on) $('unBtn').onclick = async () => { await fetch('local/unload', { method: 'POST' }); refreshLocal(); };
+    if (gpuBtn) $('gpuBtn').onclick = async () => {
+      if (!confirm('Test the graphics card now? It takes a minute or two. Save your work in other programs first: on some old graphics cards the screen may pause or the driver may restart.')) return;
+      await fetch('local/retune', { method: 'POST' }); refreshLocal(); pollLocal();
+    };
   }
   return ['downloading', 'starting', 'tuning'].includes(local.state);
 }
@@ -472,7 +525,7 @@ async function pollLocal() { clearTimeout(localTimer); const fast = await refres
 async function refresh() {
   try {
     const r = await fetch('api/status'); if (!r.ok) throw 0; const s = await r.json();
-    document.title = s.app; $('appName').textContent = s.app;
+    document.title = local?.app || s.app; $('appName').textContent = document.title;
     const working = s.index.state !== 'idle'; serverLLM = !!s.llm_available; status = s;
     // English is the default. Simple English and Tanglish need the office model, so they appear only when it is connected.
     $('style').hidden = !serverLLM; if (!serverLLM && style !== 'english') { style = 'english'; paintStyle(); }
@@ -519,7 +572,7 @@ async function openDesk() {
 function paintAdmin(c) {
   const el = $('adminCard'); el.hidden = !admin; if (!admin) return;
   el.innerHTML = `<b><i class="led ${c.pin_set ? 'ok' : ''}"></i>Managing from other PCs · ${c.pin_set ? 'PIN set' : 'off'}</b>Without a PIN the library can only be changed on this PC. Set one to manage it from any PC on the network.
-    <div class="row"><input id="newPin" type="password" placeholder="New PIN, 8 characters or more" autocomplete="new-password"><button class="ghost" id="setPin">${c.pin_set ? 'Change PIN' : 'Set PIN'}</button><button class="ghost" id="quitLib">Stop the Library</button></div><div id="adminErr" class="err" role="alert"></div>`;
+    <div class="row"><input id="newPin" type="password" placeholder="New PIN, 8 characters or more" autocomplete="new-password"><button class="ghost" id="setPin">${c.pin_set ? 'Change PIN' : 'Set PIN'}</button><button class="ghost" id="quitLib">Stop the Library</button></div><div id="adminErr" class="err" role="alert"></div>${updLine()}`;
   $('setPin').onclick = async () => { const v = $('newPin').value; const r = await fetch('api/admin/pin', { method: 'POST', headers: { 'Content-Type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ pin: v }) }); const j = await r.json(); if (!r.ok) { $('adminErr').textContent = j.detail; return; } pin = v; sessionStorage.setItem('pin', v); openDesk(); };
   $('quitLib').onclick = async () => { if (!confirm('Stop DexMentor Library? Engineers will not get answers until it is started again.')) return; await fetch('api/admin/quit', { method: 'POST', headers: adminHeaders() }); $('adminErr').textContent = 'The Library is stopping. Start it again from the Start menu.'; };
 }
@@ -605,5 +658,55 @@ async function paintPack(p) {
 $('libBtn').onclick = openDesk;
 $('deskClose').onclick = () => { $('desk').hidden = true; };
 
+// ---------- in-app updates (only inside the DexMentor Ask and DexMentor Library apps) ----------
+// The app checks GitHub every hour, downloads a newer version in the background and checks its fingerprint.
+// Here the person decides when: "Restart and update" stops the app's background work, installs and reopens.
+const shell = window.__TAURI_INTERNALS__;
+let upd = null, updLater = null;
+const isDesk = () => location.hash === '#desk' || !local;
+async function paintUpdate() {
+  if (!shell) return;
+  try { upd = await shell.invoke('update_status'); } catch { return; }
+  const bar = $('updBar'), name = document.title, mb = (n) => (n / 1048576).toFixed(0);
+  let html = '';
+  if (upd.state === 'installing') html = `<b>Installing ${esc(name)} ${esc(upd.version || '')}…</b>It opens again by itself in a moment.`;
+  else if (upd.state === 'ready' && updLater !== upd.version) {
+    html = `<b>${esc(name)} ${esc(upd.version)} is ready to install.</b>` +
+      (isDesk() ? 'The Library restarts for about a minute; engineers reconnect by themselves. Documents and the index are kept.'
+        : 'The app closes for a few seconds, installs it and opens again. Your saved chats, the model and settings are kept.') +
+      '<div class="row"><button class="cta" id="updGo">Restart and update</button><button class="ghost" id="updLater">Later</button></div>';
+  } else if (upd.updated && !sessionStorage.getItem('updSeen')) {
+    html = `<b>Updated to ${esc(upd.updated)}.</b>`; sessionStorage.setItem('updSeen', '1'); setTimeout(() => { $('updBar').hidden = true; }, 8000);
+  } else if (upd.failed && upd.state !== 'ready' && !sessionStorage.getItem('updFailSeen')) {
+    html = `<b>The update to ${esc(upd.failed)} did not finish.</b>Nothing was changed. It is offered again after the next check. <div class="row"><button class="ghost" id="updLater">OK</button></div>`;
+    sessionStorage.setItem('updFailSeen', '1');
+  }
+  bar.innerHTML = html; bar.hidden = !html;
+  if ($('updGo')) $('updGo').onclick = () => installUpdate(false);
+  if ($('updLater')) $('updLater').onclick = () => { updLater = upd.version; bar.hidden = true; };
+}
+async function installUpdate(back) {
+  const working = busy ? 'An answer is still being written and will be lost. ' : status?.index?.state && status.index.state !== 'idle' && isDesk() ? 'Documents are being read; that continues after the update. ' : '';
+  if (back && !confirm(`Go back to version ${upd.previous}? ${document.title} closes, installs it and opens again. Your data is kept.`)) return;
+  if (!back && working && !confirm(working + 'Restart and update now?')) return;
+  $('updBar').hidden = false; $('updBar').innerHTML = `<b>Closing ${esc(document.title)} to install…</b>`;
+  try { await shell.invoke('update_install', { back }); } catch (e) { $('updBar').innerHTML = `<b>The update could not start.</b>${esc(String(e))}<div class="row"><button class="ghost" id="updLater">OK</button></div>`; $('updLater').onclick = () => { $('updBar').hidden = true; }; }
+}
+// One line under the version: when it was checked, check now, and the way back to the version before.
+function updLine() {
+  if (!shell || !upd) return '';
+  const t = upd.checked ? new Date(upd.checked * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+  const st = upd.state === 'downloading' ? `Downloading ${upd.version} · ${upd.total ? Math.round(upd.done / upd.total * 100) : 0}%`
+    : upd.state === 'checking' ? 'Checking for updates…' : upd.state === 'error' ? esc(upd.error) : upd.state === 'current' ? `Up to date${t ? ' (checked ' + t + ')' : ''}` : upd.state === 'ready' ? `${esc(upd.version)} is ready` : 'Checks for updates every hour';
+  return `<div class="updline">${st} · <a href="#" data-upd="check">Check now</a>${upd.previous ? ` · <a href="#" data-upd="back">Go back to ${esc(upd.previous)}</a>` : ''}</div>`;
+}
+document.addEventListener('click', async (e) => {
+  const a = e.target.closest('[data-upd]'); if (!a) return; e.preventDefault();
+  if (a.dataset.upd === 'back') return installUpdate(true);
+  a.textContent = 'Checking…'; updLater = null; upd = await shell.invoke('update_check'); paintUpdate(); refreshLocal(); if (!$('desk').hidden) openDesk();
+});
+if (shell) { paintUpdate(); setInterval(paintUpdate, 60000); }
+
 renderChats(); render(); poll(); pollLocal();
+loadChats().then(() => { renderChats(); render(); });
 if (location.hash === '#desk') openDesk();
