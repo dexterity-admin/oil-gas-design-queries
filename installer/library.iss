@@ -33,7 +33,7 @@ RestartApplications=no
 [Messages]
 SetupWindowTitle=Install DexMentor Library
 WelcomeLabel1=Welcome to DexMentor Library
-WelcomeLabel2=The Library holds your office's engineering standards and answers the engineers' DexMentor Ask apps on the office network.%n%nInstall it on the one PC that stays on during working hours. This installs DexMentor Library [ver] for you only; Windows is never restarted.
+WelcomeLabel2=The Library holds your office's engineering standards and answers the engineers' DexMentor Ask apps on the office network.%n%nInstall it on the one PC that stays on during working hours. This installs [name/ver] for you only; Windows is never restarted.
 FinishedHeadingLabel=DexMentor Library is running
 FinishedLabel=Add documents on the Library desk. The Library keeps serving the office from the tray when the desk is closed, and keeps itself up to date.
 FinishedLabelNoIcons=Add documents on the Library desk. The Library keeps serving the office from the tray when the desk is closed, and keeps itself up to date.

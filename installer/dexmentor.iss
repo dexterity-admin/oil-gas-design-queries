@@ -35,7 +35,7 @@ RestartApplications=no
 [Messages]
 SetupWindowTitle=Install DexMentor Ask
 WelcomeLabel1=Welcome to DexMentor Ask
-WelcomeLabel2=Ask your office's engineering standards a question and get the answer with the page it came from.%n%nThis installs DexMentor Ask [ver] for you only. No administrator rights are needed, and Windows is never restarted.
+WelcomeLabel2=Ask your office's engineering standards a question and get the answer with the page it came from.%n%nThis installs [name/ver] for you only. No administrator rights are needed, and Windows is never restarted.
 FinishedHeadingLabel=DexMentor Ask is ready
 FinishedLabel=DexMentor Ask finds the office Library on the network by itself, and keeps itself up to date.
 FinishedLabelNoIcons=DexMentor Ask finds the office Library on the network by itself, and keeps itself up to date.
