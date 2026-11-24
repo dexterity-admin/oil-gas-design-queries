@@ -477,7 +477,7 @@ async function refresh() {
     // English is the default. Simple English and Tanglish need the office model, so they appear only when it is connected.
     $('style').hidden = !serverLLM; if (!serverLLM && style !== 'english') { style = 'english'; paintStyle(); }
     $('dot').className = 'led ' + (working ? 'busy' : 'ok');
-    $('libText').textContent = working ? `indexing ${s.index.done}/${s.index.total}` : `${s.documents} docs`;
+    $('libText').textContent = working ? (s.index.state === 'checking' ? 'checking for changes' : `indexing ${s.index.done}/${s.index.total}`) : `${s.documents} docs`;
     const changed = !lib || lib.documents !== s.documents || lib.chunks !== s.chunks;
     if (changed) { lib = { documents: s.documents, chunks: s.chunks, docs: await (await fetch('api/documents')).json() }; if (!messages.length) render(); }
     if (!$('desk').hidden) paintDesk();
@@ -540,12 +540,13 @@ function paintDesk() {
   $('deskSummary').textContent = `${s.documents} documents · ${s.chunks} sections read · version ${s.version} · engineers' PCs connect to ${s.address}`;
   const log = Object.fromEntries((s.index.log || []).map((e) => [e.name, e]));
   let prog = jobs.map((j) => `<div class="job ${j.state}"><span>${esc(j.name)}</span><div class="bar"><i style="width:${j.pct}%"></i></div><span>${j.state === 'err' ? esc(j.msg) : j.pct < 100 ? j.pct + '%' : 'received'}</span></div>`).join('');
-  if (s.index.state !== 'idle') prog += `<div class="pipe"><div class="st done"><i></i>Receive</div><div class="ln done"></div><div class="st ${s.index.state === 'indexing' ? 'now' : 'done'}"><i></i>Read</div><div class="ln ${s.index.state === 'indexing' ? 'now' : 'done'}"></div><div class="st ${s.index.state === 'embedding' ? 'now' : ''}"><i></i>Index</div><div class="ln"></div><div class="st"><i></i>Ready</div><span class="clock">${s.index.done}/${s.index.total}</span></div><div class="job"><span>${esc(s.index.current || 'building the meaning index')}</span></div>`;
+  if (s.index.state !== 'idle') prog += `<div class="pipe"><div class="st done"><i></i>Receive</div><div class="ln done"></div><div class="st ${['checking', 'indexing'].includes(s.index.state) ? 'now' : 'done'}"><i></i>Read</div><div class="ln ${['checking', 'indexing'].includes(s.index.state) ? 'now' : 'done'}"></div><div class="st ${s.index.state === 'embedding' ? 'now' : ''}"><i></i>Index</div><div class="ln"></div><div class="st"><i></i>Ready</div><span class="clock">${s.index.done}/${s.index.total}</span></div><div class="job"><span>${esc(s.index.current ? (s.index.state === 'checking' ? 'checking ' : '') + s.index.current : s.index.state === 'checking' ? 'checking for new and changed files' : 'building the meaning index')}</span></div>`;
   $('deskProgress').innerHTML = prog;
   $('register').innerHTML = docs.length ? `<table><thead><tr><th>No.</th><th></th><th>Document</th><th>Type</th><th>Pages</th><th>Passages</th><th>Tables</th><th></th></tr></thead><tbody>` +
     docs.map((d, i) => `<tr data-id="${d.id}" class="${inspecting === d.id ? 'sel' : ''}"><td class="mono">${pad(i + 1)}</td><td><i class="led ${log[d.name]?.error ? 'bad' : d.note || !d.chunks ? 'busy' : 'ok'}" title="${log[d.name]?.error ? 'Could not be read' : d.note || !d.chunks ? 'Check: ' + esc(d.note || 'no text found') : 'Read'}"></i></td><td class="nm">${esc(d.name)}${d.folder ? `<small style="color:var(--mute)">${d.linked ? '⇄ ' : ''}${esc(d.folder)}</small>` : ''}${d.note ? `<small>${esc(d.note)}</small>` : ''}${log[d.name]?.error ? `<small>${esc(log[d.name].error)}</small>` : ''}</td><td class="mono">${esc(d.kind.toUpperCase())}</td><td class="mono">${d.pages}</td><td class="mono">${d.chunks}</td><td class="mono">${d.tables}</td><td>${admin && !d.linked ? '<button class="rm" title="Remove from the library">Remove</button>' : ''}</td></tr>`).join('') + '</tbody></table>'
     : '<p class="hint">The library is empty. Add your standards, design bases and reference documents to begin.</p>';
   const failed = (s.index.errors || []).length; if (failed) $('deskProgress').innerHTML += `<div class="job err">${failed} file(s) could not be read: ${esc(s.index.errors.join('; '))}</div>`;
+  const copies = s.index.duplicate_count || 0; if (copies) $('deskProgress').innerHTML += `<div class="job"><span>${copies} ${copies === 1 ? 'copy' : 'copies'} of documents already in the library not read again: ${esc((s.index.duplicates || []).map((d) => `${d.name} (same as ${d.of})`).join('; '))}${copies > (s.index.duplicates || []).length ? '; …' : ''}</span></div>`;
 }
 $('register').addEventListener('click', async (e) => {
   const tr = e.target.closest('tr[data-id]'); if (!tr) return; const id = +tr.dataset.id, d = lib.docs.find((x) => x.id === id);

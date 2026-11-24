@@ -77,7 +77,7 @@ def status():
 @app.post("/api/reindex")
 def reindex(request: Request):
     _admin(request)
-    ingest.sync_in_background()
+    ingest.sync_in_background(retry_failed=True)  # the librarian pressed Re-read: try the failed files again too
     return {"ok": True}
 
 
@@ -326,7 +326,7 @@ def folder_add(body: Folder, request: Request):
     if _too_broad(path):
         raise HTTPException(400, "That folder is too broad (a whole drive, a system folder or a user profile). "
                                  "Link the folder that holds the standards.")
-    if path not in config.FOLDERS:
+    if os.path.normcase(path) not in {os.path.normcase(f) for f in config.FOLDERS}:  # one folder, however it is typed
         config.save(folders=config.FOLDERS + [path])
     ingest.sync_in_background()
     return folders(request)
