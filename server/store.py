@@ -19,6 +19,11 @@ CREATE TABLE IF NOT EXISTS chunks(
 CREATE INDEX IF NOT EXISTS chunks_doc ON chunks(doc_id);
 CREATE INDEX IF NOT EXISTS chunks_todo ON chunks(id) WHERE emb IS NULL;
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text, heading, tokenize='porter unicode61');
+-- Files that were looked at but are not documents of their own: copies of an indexed document, and files
+-- that could not be read. Remembering them (by size-and-date stamp and content fingerprint) means an
+-- unchanged copy is never fingerprinted again and a broken file is not re-read on every rescan.
+CREATE TABLE IF NOT EXISTS seen(
+  relpath TEXT PRIMARY KEY, stamp TEXT, sha TEXT, error TEXT, version TEXT);
 """
 
 STOP = set("""a an and are as at be by can do does for from how i in is it its me my of on or our
@@ -40,6 +45,9 @@ def db():
 def init():
     with db() as con:
         con.executescript(SCHEMA)
+        if "sha" not in {r[1] for r in con.execute("PRAGMA table_info(documents)")}:
+            con.execute("ALTER TABLE documents ADD COLUMN sha TEXT")  # indexes made before fingerprints
+        con.execute("CREATE INDEX IF NOT EXISTS documents_sha ON documents(sha)")
 
 
 def invalidate_vectors():
@@ -55,10 +63,10 @@ def delete_document(con, doc_id):
     con.execute("DELETE FROM documents WHERE id=?", (doc_id,))
 
 
-def add_document(con, relpath, name, kind, stamp, pages, note, chunks):
+def add_document(con, relpath, name, kind, stamp, pages, note, chunks, sha=None):
     cur = con.execute(
-        "INSERT INTO documents(relpath,name,kind,stamp,pages,note) VALUES(?,?,?,?,?,?)",
-        (relpath, name, kind, stamp, pages, note))
+        "INSERT INTO documents(relpath,name,kind,stamp,pages,note,sha) VALUES(?,?,?,?,?,?,?)",
+        (relpath, name, kind, stamp, pages, note, sha))
     doc_id = cur.lastrowid
     for c in chunks:
         cur = con.execute(

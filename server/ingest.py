@@ -3,6 +3,7 @@
 Every chunk remembers exactly where it came from (page and rectangle, sheet and rows,
 slide, or heading) so the app can show the original and highlight it.
 """
+import hashlib
 import os
 import re
 from pathlib import Path
@@ -20,6 +21,7 @@ HEADING_RE = re.compile(r"^(\d+(\.\d+){0,4}|[A-Z]\.\d+(\.\d+)*|APPENDIX|ANNEX|SE
 
 status = {"state": "idle", "current": "", "done": 0, "total": 0, "errors": [], "embeddings": "off", "log": []}
 _again = False  # a file arrived while indexing was running: go round once more
+_retry = False  # the librarian asked to read again the files that failed before
 _lock = threading.Lock()
 _embedder = None
 
@@ -543,23 +545,137 @@ def seed_starter():
         config.save(starter_seeded=config.STARTER_SEEDED + done)
 
 
-def sync():
-    """Index new and changed files, drop deleted ones. Safe to call any time."""
-    global _again
+def fingerprint(path):
+    """Content fingerprint: the same document under another name, in another folder or moved is recognised.
+    The file type is part of it: the same bytes saved as .pdf and as .xlsx are read by different readers."""
+    with open(path, "rb") as f:
+        return Path(path).suffix.lower() + ":" + hashlib.file_digest(f, "sha256").hexdigest()
+
+
+def _stamp(p):
+    st = p.stat()
+    return "%d-%d" % (st.st_size, int(st.st_mtime))
+
+
+def _plan(files, offline, retry=False):
+    """Decide what each file needs, so nothing is read twice: returns (files to read, index changed).
+
+    Unchanged file -> nothing, it is not even opened. Same content as an indexed document -> moved or
+    renamed (the document only changes its path) or a copy (skipped, listed). Content that could not be
+    read before -> skipped until the file changes or the program is updated. Same content twice in this
+    round -> read once. Everything is remembered by size-and-date stamp, so a fingerprint is taken once."""
+    is_offline = lambda rel: any(rel == o or rel.startswith(o.rstrip("\\/") + os.sep) for o in offline)
+    with store.db() as con:
+        docs = {r["relpath"]: dict(r) for r in con.execute("SELECT id,relpath,stamp,sha FROM documents")}
+        seen = {r["relpath"]: dict(r) for r in con.execute("SELECT * FROM seen")}
+    status.update(state="checking", done=0, total=0, errors=[], duplicates=[], duplicate_count=0)
+    pending, refresh = [], []
+    for rel, p in files.items():
+        try:
+            stamp = _stamp(p)
+        except OSError:
+            continue
+        d, s = docs.get(rel), seen.get(rel)
+        if d and d["stamp"] == stamp and d["sha"]:
+            continue
+        if s and s["stamp"] == stamp and s["sha"]:
+            sha = s["sha"]
+        else:
+            status["current"] = p.name
+            try:
+                sha = fingerprint(p)
+            except OSError:
+                continue  # locked or unreachable: looked at again next round
+        if d and (d["stamp"] == stamp or d["sha"] == sha):  # fingerprint for an older index, or saved unchanged
+            d.update(stamp=stamp, sha=sha)
+            refresh.append((stamp, sha, d["id"]))
+            continue
+        pending.append((rel, p, stamp, sha))
+
+    # Documents whose content is no longer at their path: the file was deleted, moved or overwritten.
+    # A network drive that is switched off must not wipe its documents from the index.
+    free = {d["id"] for rel, d in docs.items() if rel not in files and not is_offline(rel)}
+    free |= {docs[rel]["id"] for rel, *_ in pending if rel in docs}
+    by_sha = {}
+    for d in sorted(docs.values(), key=lambda d: (d["id"] in free, d["id"])):
+        if d["sha"]:
+            by_sha.setdefault(d["sha"], d)
+    failed = {s["sha"]: s for s in seen.values() if s["error"] and s["version"] == config.VERSION and not retry}
+    drop, notes, moves, queue, queued = [], {}, [], [], {}
+
+    def copy_of(rel, stamp, sha, of):
+        notes[rel] = (stamp, sha, None)
+        status["duplicate_count"] += 1
+        if len(status["duplicates"]) < 50:
+            status["duplicates"].append({"name": Path(rel).name, "of": Path(of).name})
+
+    for d in docs.values():  # the same content indexed twice before this check existed: keep one
+        keep = by_sha.get(d["sha"])
+        if keep and keep is not d and d["id"] not in free:
+            drop.append(d["id"])
+            copy_of(d["relpath"], d["stamp"], d["sha"], keep["relpath"])
+    for rel, p, stamp, sha in pending:
+        twin = by_sha.get(sha)
+        if twin and twin["id"] in free:  # moved or renamed: keep what was read, change only the path
+            free.discard(twin["id"])
+            moves.append((rel, p.name, stamp, twin["id"]))
+            twin["relpath"] = rel
+        elif twin:
+            copy_of(rel, stamp, sha, twin["relpath"])
+        elif sha in queued:
+            copy_of(rel, stamp, sha, queued[sha])
+        elif sha in failed:
+            notes[rel] = (stamp, sha, failed[sha]["error"])
+            status["errors"].append("%s: %s (not read again until the file changes)" % (p.name, failed[sha]["error"]))
+        else:
+            queued[sha] = rel
+            queue.append((rel, p, stamp, sha))
+    # Left over: content gone from the library. An overwritten file keeps its old version until the new one reads.
+    waiting = {rel for rel, *_ in queue} | {rel for rel, (_, _, err) in notes.items() if err}
+    drop += [d["id"] for rel, d in docs.items() if d["id"] in free and not (rel in files and rel in waiting)]
+    stale = [(rel,) for rel in seen if (rel not in files and not is_offline(rel)) or rel in {m[0] for m in moves}]
+    with store.db() as con:
+        for i in drop:
+            store.delete_document(con, i)
+        con.executemany("UPDATE documents SET stamp=?,sha=? WHERE id=?", refresh)
+        # Two steps, so files that swapped names never hold the same path at once.
+        con.executemany("UPDATE documents SET relpath='?moving '||id WHERE id=?", [(m[3],) for m in moves])
+        con.executemany("UPDATE documents SET relpath=?,name=?,stamp=? WHERE id=?", moves)
+        con.executemany("DELETE FROM seen WHERE relpath=?", stale)
+        con.executemany("INSERT OR REPLACE INTO seen VALUES(?,?,?,?,?)",
+                        [(rel, *v, config.VERSION) for rel, v in notes.items()])
+    return queue, bool(drop or moves)
+
+
+def sync(retry_failed=False):
+    """Index new and changed files, drop deleted ones. Safe to call any time.
+    retry_failed reads files again that could not be read before (the librarian asked for it)."""
+    global _again, _retry
+    _retry = _retry or retry_failed
     if not _lock.acquire(blocking=False):
         _again = True
         return
     global _embedder
     try:
         _again = False
+        retry, _retry = _retry, False
         if _embedder is False:
             _embedder = None  # it may have failed for lack of internet: try again this round
         config.LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
         seed_starter()
         pack.fetch()
         wanted = lambda p: p.suffix.lower() in config.SUPPORTED and not p.name.startswith(("~$", "."))
-        files = {str(p.relative_to(config.LIBRARY_DIR)): p for p in sorted(config.LIBRARY_DIR.rglob("*"))
-                 if p.is_file() and wanted(p)}
+        files, reached = {}, set()
+
+        def take(rel, p):  # a file reached twice (overlapping linked folders, Q:\ and q:\) is read once
+            k = os.path.normcase(os.path.abspath(p))
+            if k not in reached:
+                reached.add(k)
+                files[rel] = p
+
+        for p in sorted(config.LIBRARY_DIR.rglob("*")):
+            if p.is_file() and wanted(p):
+                take(str(p.relative_to(config.LIBRARY_DIR)), p)
         offline, report = [], {}
         for folder in config.FOLDERS:  # linked folders (for example a mapped network drive) are read where they are
             root = os.path.abspath(folder)
@@ -573,7 +689,7 @@ def sync():
                 for n in names:
                     p = Path(base) / n
                     if wanted(p):
-                        files[str(p)] = p
+                        take(str(p), p)
                         info["documents"] += 1
                     elif p.suffix.lower() in (".doc", ".xls", ".ppt", ".dwg", ".txt", ".rtf"):
                         info["skipped"] += 1
@@ -581,26 +697,16 @@ def sync():
                 info["reachable"] = False
                 offline.append(root)
         status["folders"] = report
-        changed = False
-        with store.db() as con:
-            known = {r["relpath"]: (r["id"], r["stamp"]) for r in con.execute("SELECT id,relpath,stamp FROM documents")}
-            for rel in set(known) - set(files):
-                # A network drive that is switched off must not wipe its documents from the index.
-                if any(rel == o or rel.startswith(o.rstrip("\\/") + os.sep) for o in offline):
-                    continue
-                store.delete_document(con, known[rel][0])
-                changed = True
-        todo = []
-        for rel, p in files.items():
+        queue, changed = _plan(files, offline, retry)
+        status.update(state="indexing", done=0, total=len(queue), current="")
+        for rel, p, stamp, sha in queue:
             try:
-                st = p.stat()
+                now = _stamp(p)
             except OSError:
+                now = None
+            if now != stamp:  # deleted, or still being copied, since it was looked at: the next round sees it
+                status["done"] += 1
                 continue
-            stamp = "%d-%d" % (st.st_size, int(st.st_mtime))
-            if rel not in known or known[rel][1] != stamp:
-                todo.append((rel, p, stamp))
-        status.update(state="indexing", done=0, total=len(todo), errors=[])
-        for rel, p, stamp in todo:
             status["current"] = p.name
             t0, entry = time.time(), {"name": p.name}
             try:
@@ -612,18 +718,23 @@ def sync():
                     pages, chunks, note = PARSERS[p.suffix.lower()](p)
                 entry.update(pages=pages, passages=len(chunks), tables=sum(c["kind"] == "table" for c in chunks), note=note)
                 with store.db() as con:
-                    if rel in known:
-                        store.delete_document(con, known[rel][0])
-                    store.add_document(con, rel, p.name, p.suffix.lower().lstrip("."), stamp, pages, note, chunks)
+                    for (old,) in con.execute("SELECT id FROM documents WHERE relpath=?", (rel,)).fetchall():
+                        store.delete_document(con, old)  # the earlier version of this file
+                    store.add_document(con, rel, p.name, p.suffix.lower().lstrip("."), stamp, pages, note, chunks, sha)
+                    con.execute("DELETE FROM seen WHERE relpath=?", (rel,))
             except Exception as e:
                 msg = str(e).replace(str(p.parent), "").replace(str(p), p.name)[:200]  # no server paths in messages
                 status["errors"].append("%s: %s" % (p.name, msg))
                 entry["error"] = msg
                 traceback.print_exc()
+                # A locked file may open next time and a missing reader is this PC's fault; a broken file stays broken.
+                if not isinstance(e, (OSError, MemoryError, ImportError)):
+                    with store.db() as con:
+                        con.execute("INSERT OR REPLACE INTO seen VALUES(?,?,?,?,?)", (rel, stamp, sha, msg, config.VERSION))
             entry["seconds"] = round(time.time() - t0, 1)
             status["log"] = ([entry] + status["log"])[:40]
             status["done"] += 1
-        if changed or todo:  # an unchanged library keeps its search index in memory
+        if changed or queue:  # an unchanged library keeps its search index in memory
             store.invalidate_vectors()
             store.stats.cache = None
         status.update(state="embedding", current="")
@@ -654,5 +765,5 @@ def rescan_forever(minutes=30):
             sync()
 
 
-def sync_in_background():
-    threading.Thread(target=sync, daemon=True).start()
+def sync_in_background(retry_failed=False):
+    threading.Thread(target=sync, args=(retry_failed,), daemon=True).start()
