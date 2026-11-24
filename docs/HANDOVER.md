@@ -12,8 +12,8 @@ Everything runs on the office's own PCs. There is no cloud model.
 
 | Piece | Runs on | What it is |
 | --- | --- | --- |
-| **DexMentor Library** | One always-on Windows PC | FastAPI server (`server/`), port 8700. Reads PDF, Word, Excel, PowerPoint; indexes them (SQLite FTS5 + `BAAI/bge-small-en-v1.5` embeddings through fastembed); serves the web interface (`web/`) and the admin "Library desk". Packaged with PyInstaller (one folder) and Inno Setup. |
-| **DexMentor** | Every engineer's Windows PC | Small launcher (`desktop/dexmentor.py`, standard library only), port 8720. Finds the Library on the LAN (UDP broadcast, port 8701, message `DEXMENTOR_DISCOVER_V1`), downloads and runs a small model on demand (llama.cpp `llama-server`, port 8719), proxies the interface. |
+| **DexMentor Library** | One always-on Windows PC | Rust desktop shell (`apps/library`: window, tray, single copy, updates) that runs the Python engine hidden behind it: FastAPI server (`server/`), port 8700 (or the next free one). Reads PDF, Word, Excel, PowerPoint; indexes them (SQLite FTS5 + `BAAI/bge-small-en-v1.5` embeddings through fastembed); serves the web interface (`web/`) and the admin "Library desk". Packaged with PyInstaller (one folder) and Inno Setup. |
+| **DexMentor Ask** | Every engineer's Windows PC | Native Rust app (`apps/ask`, Tauri 2 on WebView2), local address port 8720 (or the next free one). One window, one copy; saved chats on disk. Finds the Library on the LAN (UDP broadcast, port 8701, message `DEXMENTOR_DISCOVER_V1`), downloads and runs a small model on demand (llama.cpp `llama-server`, port 8719), proxies the Library's API; the interface itself is built into the app. |
 | **Office model** (optional) | One stronger PC | Ollama with `gemma2:9b`. When linked from the Library desk it adds deeper answers, Simple English and Tanglish. Without it the app is English only. |
 | **Starter pack** (optional) | Private repo `dexterity-admin/dexmentor-starter-pack` | Reference PDFs that must not be public. The Library is connected to it once (repository name and a read-only access key) and downloads, indexes and refreshes them. |
 
@@ -49,9 +49,12 @@ costs a little accuracy; a wrong hint puts a wrong number in front of an enginee
 | `server/grounding.py` | Table matcher, arithmetic, coverage gate, number check, Tanglish guard, abbreviations |
 | `server/chat.py` | Prompts and the answer pipeline (`prepare` for the PC model, `answer` for the office model) |
 | `server/store.py` | SQLite schema and hybrid search |
-| `desktop/dexmentor.py`, `desktop/models.json` | Engineer launcher; pinned model and llama.cpp runner URLs |
+| `apps/ask/src/` | DexMentor Ask: `web.rs` local address (built-in UI, `/local/*`, `/llm/*`, proxy), `model.rs` model download and runner, `main.rs` window, single copy, updates |
+| `apps/library/src/main.rs` | DexMentor Library shell: engine child process, tray, desk window, updates, night install |
+| `apps/dexwin/src/` | Shared: `job.rs` (job objects: CPU cap, memory cap, kill with the app), `chats.rs` (safe history file, one-time import from Edge), `update.rs` (in-app updater) |
+| `desktop/models.json` | Pinned model and llama.cpp runner URLs |
 | `web/` | Interface (vanilla JS/CSS, bundled fonts) |
-| `installer/*.iss` | Inno Setup scripts (per-user installs; Library gets an autostart task) |
+| `installer/*.iss` | Inno Setup scripts: our own branded wizard (artwork from `brand/make_wizard.py`), per-user, never restart Windows; update mode (`/UPDATE=1`) starts the app again |
 | `eval/` | 30-question harness on four synthetic documents (`make_corpus.py`, `run_eval.py`) |
 | `tests/` | Unit tests for the deterministic code (`test_grounding.py` matcher and checks, `test_ingest.py` scan-text filter) |
 | `eval/smoke_docs.py` | Release smoke test: a generated scanned page and a Word table must be read in full |
@@ -76,6 +79,69 @@ python -m pytest -q tests
 
 Useful environment variables: `LIBRARY_DIR`, `DATA_DIR`, `PORT`, `ADMIN_PIN`, `EMBEDDINGS=off`,
 `OCR=auto|missing|off`, `STARTER_DIR`, `PACK_API`, `OLLAMA_URL`, `OLLAMA_MODEL`, `LLM_PROVIDER`.
+
+## Desktop apps, chat history and the PC restart (24 Nov 2026)
+
+**What changed.** Both programs used to open as Edge/Chrome `--app` windows, and every launch opened another one (a
+taskbar with 11 "DexMentor" windows was reported). They are now native Rust apps (Tauri 2 on the WebView2
+built into Windows) named **DexMentor Ask** (engineers) and **DexMentor Library** (server PC), each with its
+own icon. A second launch hands over to the running copy (named mutex + message) and brings its window to
+the front. The Library keeps the Python engine (parsing, OCR, embeddings, SQLite) as a hidden child in a job
+object, so the engine can never outlive the shell. The owner declined a full Rust rewrite of the engine because of the
+risk to reading quality.
+
+**Why chats disappeared after a restart.** Chats lived only in the browser's `localStorage`, which is tied to
+the page origin and the browser profile:
+
+1. The old launcher bound port 8720. If the bind failed, it assumed "already running" and opened a window on
+   a port that nothing served: no page, so no chats. Windows reserves blocks of ports after a restart when Hyper-V,
+   WSL or Docker is on (`netsh int ipv4 show excludedportrange protocol=tcp`). Now both apps fall back to the
+   next free port, and chats no longer depend on the port.
+2. The engineer page itself came from the Library, so the window stayed empty with no chats until the Library
+   answered (after its own PC restarted, or while the app was finding it again). The page is now built into
+   DexMentor Ask, so chats appear at once.
+3. Writes kept only in the browser can be lost at a hard power-off, and profile clean-up policies wipe them.
+   Chats are now a file in the user's own folder (`%LOCALAPPDATA%\DexMentor\chats\chats.json`; for the Library,
+   `kb\chats.json`). Each save writes a temporary file, flushes it to disk, then swaps it in with `MOVEFILE_WRITE_THROUGH`,
+   and keeps the previous copy as `.bak`. The app saves when a question is asked and every 5 s while an answer is written. An
+   answer cut off by a restart is kept and marked "interrupted". The chat that was open last opens again at start.
+   Old chats are imported once from Edge/Chrome local storage (all profiles, read from a copy). The first run
+   on the build PC imported the 3 chats it had.
+
+**Could DexMentor have restarted the test PC?** Checked, in order:
+
+| Suspect | Finding | Fix |
+| --- | --- | --- |
+| Installer restart flags | The scripts had no `AlwaysRestart`, `RestartIfNeededByRun`, `restartreplace` or `NeedsRestart`. `CloseApplications=yes` closes apps through Restart Manager but never restarts Windows. Not the cause. | Made explicit: `AlwaysRestart=no`, `RestartIfNeededByRun=no`, `CloseApplications=no` (the scripts close the apps themselves), `NeedsRestart := False`. |
+| CPU caps (`winlimits.py` job objects) | A hard CPU cap slows the capped processes; it cannot restart Windows. Not the cause. But the old launcher put **itself and the model** in the job, and nothing stopped the model if the launcher died. | The job now holds only the model runner (and, for the Library, the engine), with kill-on-close and a 4 GB committed-memory cap for the runner. |
+| **Graphics-card test** | **Most likely cause.** Right after the first model download, the old launcher ran llama.cpp's Vulkan build on any GeForce/Radeon it found, with every layer on the card, without asking. If an old card's driver hangs under that load, Windows resets the driver or bug-checks, and by default it restarts after a bug check. That matches "installed it, used it, the PC restarted". | The app never tests the graphics card by itself: the engineer presses *Test the graphics card*, which shows a warning first. A marker file is written before the test and kept while the card is in use; if the app starts and finds the marker, the test or run never finished, so the app switches to the processor for good and says why. |
+| Running out of memory | Many office PCs have no pagefile (this build PC has none: commit limit = RAM). Loading a 1 GB model with too little free memory makes Windows page heavily or fail allocations. | The app does not start the model when free memory is below its size + 512 MB, and shows a message instead; the runner's committed memory is capped at 4 GB. |
+| Crashes | Each start and stop is logged in `ask.log`; a run that did not end with "closed" is reported at the next start ("did not close normally"). | For diagnosis on a real PC. |
+
+**To confirm on the test PC** (not possible from here): in Event Viewer, *Windows Logs > System*, look around the
+time of the restart. Event 1001 (BugCheck) or 41 (Kernel-Power) means a crash; 4101 (Display driver stopped
+responding) points at the graphics card; 1074 names the program that asked for a restart (for example Windows
+Update).
+
+```powershell
+Get-WinEvent -FilterHashtable @{LogName='System'; Id=41,1001,1074,4101,6008} -MaxEvents 20 | Format-List TimeCreated, Id, ProviderName, Message
+```
+
+**Updates.** Each release publishes `latest.json`: the version, the notes, each installer's address and SHA-256, and
+the release before. Both apps check 90 s after start and then every hour. They download in the background (resuming
+after a break), verify the SHA-256 and offer *Restart and update*. The app then stops its background processes (the
+model runner; for the Library, the engine and its scan readers), starts the installer with `/SILENT /UPDATE=1` and
+closes; the installer waits for it, replaces the files and starts the app again. An update that did not
+finish is reported at the next start. *Go back to* installs the previous release the same way. The Library
+installs a ready update by itself between 01:00 and 05:00 when the desk is closed. A local build
+(`APP_VERSION` unset, "dev") never updates. All of this was run on the build PC against a local feed (download, check, card,
+close, installer started, "did not finish" at the next start). The real installer's update mode is run only by
+the release workflow and the first real update.
+
+**Icons.** DexMentor's own app icon (sheet with an amber citation badge on a teal rounded diamond, the owner's
+choice) is the master: `brand/dexmentor-icon.svg`, rendered at 1024 px by Edge into
+`brand/dexmentor-icon-1024.png`. `brand/make_icon.py` derives every size from that render; the Library variant puts the same icon on an
+ink tile. The Dexterity company marks are not used as the app icon.
 
 ## What has been proven, and how
 

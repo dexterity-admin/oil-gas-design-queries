@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
+<div id="updBar" class="updbar" role="status" hidden></div>
 <div id="app">
   <header>
     <button id="menuBtn" class="tool" title="Logbook" aria-label="Logbook">
@@ -36,6 +37,7 @@
     <nav id="side">
       <button id="newBtn" class="cta">+ New question</button>
       <div class="cap">Saved chats <button id="clearAll" title="Delete every saved chat on this PC">clear all</button></div>
+      <div id="chatErr" class="err" role="alert" hidden>Chats could not be saved to this PC's disk. Trying again…</div>
       <div id="chatList"></div>
       <div id="modelCard" class="unit" hidden></div>
     </nav>

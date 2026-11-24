@@ -57,7 +57,8 @@ async def guard(request: Request, call_next):
         if origin and origin.split("://", 1)[-1] != request.headers.get("host"):  # another web site calling us
             return Response("Cross-site requests are not allowed.", status_code=403)
         size = int(request.headers.get("content-length") or 0)
-        if size > 2_000_000 and not request.url.path.startswith("/api/admin/files/"):
+        limit = 64_000_000 if request.url.path == "/local/chats" else 2_000_000
+        if size > limit and not request.url.path.startswith("/api/admin/files/"):
             return Response("Request too large.", status_code=413)
     return await call_next(request)
 
@@ -236,6 +237,71 @@ def quit_library(request: Request):
     """Stops the Library program (it has no window of its own to close)."""
     _admin(request)
     threading.Timer(0.5, lambda: os._exit(0)).start()
+    return {"ok": True}
+
+
+# ---------- saved chats of the person at the Library PC itself ----------
+# Kept on disk in this Windows user's own data folder, written safely (a temporary file flushed to the disk,
+# then swapped in, the previous copy kept as .bak), so a forced restart or a power cut never loses the history.
+# Only the Library PC's own window may read or write them: never a visitor from the network.
+CHATS = config.DATA_DIR / "chats.json"
+_chats_lock = threading.Lock()
+
+
+def _local_only(request: Request):
+    forwarded = request.headers.get("x-forwarded-for") or request.headers.get("cf-connecting-ip")
+    host = request.headers.get("host", "").rsplit(":", 1)[0].strip("[]").lower()
+    if request.client.host not in ("127.0.0.1", "::1") or forwarded or host not in ("127.0.0.1", "localhost", "::1"):
+        raise HTTPException(403, "Saved chats are only available on this PC.")
+
+
+def load_chats(path=None):
+    path = path or CHATS
+    for p in (path, path.with_name(path.name + ".bak")):
+        try:
+            v = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(v, dict) and isinstance(v.get("chats"), list):
+                return v
+        except (OSError, ValueError):
+            pass
+    return {"chats": [], "current": None}
+
+
+def save_chats(v, path=None):
+    path = path or CHATS
+    if not (isinstance(v, dict) and isinstance(v.get("chats"), list)):
+        raise ValueError("not a chat history")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(v, f, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())  # on the disk, not only in the Windows cache
+    if path.exists():
+        try:
+            import shutil
+            shutil.copyfile(path, path.with_name(path.name + ".bak"))
+        except OSError:
+            pass
+    os.replace(tmp, path)
+
+
+@app.get("/local/chats")
+def get_chats(request: Request):
+    _local_only(request)
+    with _chats_lock:
+        return load_chats()
+
+
+@app.put("/local/chats")
+async def put_chats(request: Request):
+    _local_only(request)
+    try:
+        v = json.loads(await request.body())
+        with _chats_lock:
+            save_chats(v)
+    except ValueError:
+        raise HTTPException(400, "That is not a chat history.")
     return {"ok": True}
 
 
